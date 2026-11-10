@@ -59,6 +59,8 @@ select = [
     "S",    # bandit
     "T20",  # no print(): every line on stdout must be a JSON log line
 ]
+# The bot speaks Russian: Cyrillic letters that look like Latin ones are not a mistake here.
+ignore = ["RUF001"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106"]  # assert; test tokens and secrets are fake

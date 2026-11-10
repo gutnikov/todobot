@@ -8,78 +8,27 @@ out, the rejected update would have been stored and answered by then, had it bee
 from __future__ import annotations
 
 import asyncio
-import itertools
-import time
 from typing import Any
 
 import psycopg
 import pytest
 from aiogram import Bot, Dispatcher
-from aiohttp import web
-from aiohttp.test_utils import TestClient, TestServer
+from fakes import HEADER, SECRET, TOKEN, message_update, running_app
 
 from todobot import texts
-from todobot.config import Settings
-from todobot.web import WEBHOOK_PATH, WebhookHandler, build_app
-
-TOKEN = "123456789:unit-test-token"
-SECRET = "unit_webhook_secret_9f2c"
-HEADER = "X-Telegram-Bot-Api-Secret-Token"
+from todobot.web import WEBHOOK_PATH, WebhookHandler
 
 INTRUDER = 111_111_111  # sends with a wrong or missing secret
 OWNER = 222_222_222  # sends with the right one: the control
 
-_update_ids = itertools.count(1)
-
-
-def text_update(user_id: int, text: str) -> dict[str, Any]:
-    return {
-        "update_id": next(_update_ids),
-        "message": {
-            "message_id": next(_update_ids),
-            "from": {"id": user_id, "is_bot": False, "first_name": "Test"},
-            "chat": {"id": user_id, "type": "private", "first_name": "Test"},
-            "date": int(time.time()),
-            "text": text,
-        },
-    }
-
-
-class FakeBotApi:
-    """Records `/bot<token>/<method>` calls; a Message for sendMessage, `true` for anything else."""
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, dict[str, str]]] = []
-        self.called = asyncio.Event()
-        self.app = web.Application()
-        self.app.router.add_post("/bot{token}/{method}", self.handle)
-
-    async def handle(self, request: web.Request) -> web.Response:
-        form = {key: str(value) for key, value in (await request.post()).items()}
-        method = request.match_info["method"]
-        self.calls.append((method, form))
-        self.called.set()
-        result: Any = True
-        if method == "sendMessage":
-            chat = {"id": int(form["chat_id"]), "type": "private"}
-            result = {"message_id": len(self.calls), "date": int(time.time()), "chat": chat, "text": form["text"]}
-        return web.json_response({"ok": True, "result": result})
-
 
 async def _post_rejected_then_control(database_url: str, rejected_headers: dict[str, str]) -> tuple[int, int, list]:
-    api = FakeBotApi()
-    async with TestServer(api.app) as api_server:
-        settings = Settings(
-            database_url=database_url,
-            bot_token=TOKEN,
-            webhook_secret=SECRET,
-            api_base=str(api_server.make_url("")),
-            version="unit",
+    async with running_app(database_url) as (client, api):
+        rejected = await client.post(
+            WEBHOOK_PATH, json=message_update(INTRUDER, text="не моё"), headers=rejected_headers
         )
-        async with TestClient(TestServer(build_app(settings))) as client:
-            rejected = await client.post(WEBHOOK_PATH, json=text_update(INTRUDER, "не моё"), headers=rejected_headers)
-            accepted = await client.post(WEBHOOK_PATH, json=text_update(OWNER, "моё"), headers={HEADER: SECRET})
-            await asyncio.wait_for(api.called.wait(), timeout=10)
+        accepted = await client.post(WEBHOOK_PATH, json=message_update(OWNER, text="моё"), headers={HEADER: SECRET})
+        await api.first_call()
     return rejected.status, accepted.status, api.calls
 
 

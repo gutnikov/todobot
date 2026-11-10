@@ -10,7 +10,9 @@ What it does now:
   or `other`, and the bot answers "Сохранил ✅" (SK-2). Any Telegram user may use it; each user's rows are theirs.
 - `GET /healthz` answers 200 `{"status": "ok", "version": …}` when the database answers, else 503 (SK-4).
 - Every line on stdout is one JSON object with `level`, `event` and `version`. A handler that fails logs
-  `event=handler_error`, apologises in the chat, and the server keeps running (SK-5).
+  `event=handler_error`, apologises in the chat, and the server keeps running (SK-5). What users write stays out
+  of the logs: database errors carry no parameters, and the message's text and caption are cut out of the
+  `handler_error` traceback.
 
 Updates come in by webhook (`POST /telegram/webhook`, checked against `TELEGRAM_WEBHOOK_SECRET`). Replies are Bot
 API `sendMessage` calls. The app never calls `setWebhook` itself.

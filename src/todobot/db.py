@@ -50,5 +50,7 @@ def create_engine(database_url: str) -> AsyncEngine:
         to_asyncpg_url(database_url),
         # Neon closes idle connections when its compute suspends; check a pooled one before using it.
         pool_pre_ping=True,
+        # Database errors must not carry the statement's parameters: they are users' messages, and errors get logged.
+        hide_parameters=True,
         connect_args={"timeout": CONNECT_TIMEOUT_SECONDS},
     )

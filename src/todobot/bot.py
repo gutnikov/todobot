@@ -13,7 +13,7 @@ from aiogram.types import ErrorEvent, Message
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from todobot import inbox, texts
-from todobot.logs import log_event
+from todobot.logs import format_exception, log_event, redact
 
 logger = logging.getLogger(__name__)
 
@@ -58,16 +58,21 @@ async def on_message(message: Message, engine: AsyncEngine) -> None:
 
 
 async def on_error(event: ErrorEvent, bot: Bot) -> None:
-    """SK-5: any exception a handler raises is logged and apologised for; the update counts as handled."""
+    """SK-5: any exception a handler raises is logged and apologised for; the update counts as handled.
+
+    What users write stays out of the logs. The traceback can quote it: a database error's DETAIL shows the
+    rejected row. So the message's text and caption are cut out of it.
+    """
+    message = event.update.message
+    content = (message.text, message.caption) if message else ()
     log_event(
         logger,
         "handler_error",
         level=logging.ERROR,
-        exc_info=event.exception,
         update_id=event.update.update_id,
         error=type(event.exception).__name__,
+        exc=redact(format_exception(event.exception), content),
     )
-    message = event.update.message
     if message is None:
         return
     try:

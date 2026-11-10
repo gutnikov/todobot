@@ -10,6 +10,8 @@ import json
 import logging
 import sys
 import threading
+import traceback
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from types import TracebackType
 from typing import Any
@@ -20,6 +22,41 @@ _RECORD_ATTRS = frozenset(vars(logging.makeLogRecord({}))) | {"message", "asctim
 _OWN_KEYS = frozenset({"time", "level", "version", "logger"})
 
 DEFAULT_EVENT = "log"
+
+REDACTED = "<redacted>"
+# How much of the start of a secret's line identifies it. Renderings that cut a value short keep its start:
+# Postgres's "Failing row contains (...)" clips each value to 64 bytes, asyncpg's DataError its repr to 40 chars.
+_FRAGMENT_CHARS = 12
+
+
+def redact(text: str, secrets: Iterable[str | None]) -> str:
+    """`text` without the secrets in any form an error message renders them: whole, escaped (repr) or cut short.
+
+    Each line of `text` is cut where a line of a secret begins, so a truncated tail goes too. A short secret can
+    cut more than itself; that only shortens the line.
+    """
+    needles = {
+        part[:_FRAGMENT_CHARS]
+        for secret in secrets
+        if secret
+        for form in (secret, repr(secret)[1:-1])
+        for line in form.splitlines()
+        if (part := line.strip())
+    }
+    if not needles:
+        return text
+    lines = []
+    for line in text.splitlines(keepends=True):
+        cut = min((at for needle in needles if (at := line.find(needle)) != -1), default=-1)
+        if cut != -1:
+            line = line[:cut] + REDACTED + ("\n" if line.endswith("\n") else "")
+        lines.append(line)
+    return "".join(lines)
+
+
+def format_exception(exc: BaseException) -> str:
+    """The traceback, as `exc_info` would put it into the `exc` field."""
+    return "".join(traceback.format_exception(exc)).rstrip("\n")
 
 
 class JsonFormatter(logging.Formatter):
