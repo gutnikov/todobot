@@ -12,8 +12,8 @@ done_at: production
 # What the agent can use from its own session, each checked with one real call or named by the user.
 # Keys: ci, logs, errors, metrics, traces, browser, deploy, tracker. Value: what and how, e.g. "GitLab CI via glab".
 tools:
-  ci: "GitHub Actions via gh (logged in as gutnikov; checked: gh repo list). No todobot repo yet"
-  tracker: "GitHub issues via gh (same login). No todobot repo yet"
+  ci: "GitHub Actions of gutnikov/todobot via gh (checked: gh repo view). No workflows yet"
+  tracker: "GitHub issues of gutnikov/todobot via gh (same login)"
   deploy: "Railway via the railway CLI (logged in; checked: railway list). No todobot project yet"
   logs: "Railway service logs via railway logs (same CLI). Nothing deployed yet"
   browser: "agent-browser 0.20.14 CLI and the Chrome DevTools MCP (both checked)"
