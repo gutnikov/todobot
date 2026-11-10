@@ -1,0 +1,40 @@
+[project]
+name = "todobot"
+version = "0.1.0"
+description = "A Telegram bot that takes in tasks as text, voice or pictures."
+requires-python = ">=3.12,<3.13"
+# Runtime dependencies are added by the developer together with src/todobot.
+dependencies = []
+
+[build-system]
+requires = ["hatchling>=1.29"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/todobot"]
+
+[tool.hatch.build]
+# The editable install always puts src/ on sys.path, so `python -m todobot` resolves
+# as soon as src/todobot exists, without a rebuild.
+dev-mode-dirs = ["src"]
+
+[tool.uv]
+package = true
+
+[dependency-groups]
+dev = [
+    "httpx==0.28.1",
+    "pgserver==0.1.4",
+    "psycopg[binary]==3.3.8",
+    "pytest==9.2.0",
+    "pytest-timeout==2.4.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+markers = [
+    "acceptance: black-box acceptance test that starts the app as a process (tests/acceptance)",
+]
+xfail_strict = true
+timeout = 180
