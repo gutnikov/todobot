@@ -1,0 +1,11 @@
+{
+  "name": "todobot-railway-config",
+  "private": true,
+  "description": "Only the Railway IaC SDK, for .railway/railway.ts. The app is Python (pyproject.toml).",
+  "engines": {
+    "node": ">=24"
+  },
+  "devDependencies": {
+    "railway": "3.16.0"
+  }
+}

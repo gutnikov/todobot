@@ -236,7 +236,7 @@ job; `run` never touches production.
 **`.github/workflows/release-confirmation.yml`, job `release-confirmation`.**
 
 - **Triggers:** a push to `main` whose changes touch Railway's watch paths for the service (`src/**`,
-  `pyproject.toml`, `uv.lock`, `Dockerfile`, `.dockerignore`, `railway.json`; checked against the service's
+  `pyproject.toml`, `uv.lock`, `Dockerfile`, `.dockerignore` (since 2026-11-10 set in `.railway/railway.ts`); checked against the service's
   `watchPatterns`), and `workflow_dispatch` with a `sha` input.
 - **Steps:** note the run's start (`RUN_START`, the first step), checkout with full history, install the pinned
   railway CLI, run `collect` then `run` with `RAILWAY_TOKEN` from secrets, write the result lines to the job summary,

@@ -34,7 +34,7 @@ not_here:
   discovery: "the user brings each idea and it gets built; no prototypes or decision records"
 
 # Where a change ends now: the last stage it reaches, and what confirms it there.
-ends_at: "production on Railway: a push to main that touches the app (watch paths src/, pyproject.toml, uv.lock, Dockerfile, .dockerignore, railway.json) deploys once its checks pass; release-confirmation judges every such deploy"
+ends_at: "production on Railway: a push to main that touches the app (watch paths src/, pyproject.toml, uv.lock, Dockerfile, .dockerignore) deploys once its checks pass; release-confirmation judges every such deploy; the service's settings are .railway/railway.ts, applied by the railway-config workflow"
 
 # Where the project's own systems record the exits of its super-loops. None yet.
 trace:
@@ -42,7 +42,7 @@ trace:
 
 # The checks the project already runs. None: no CI, no hooks, no linter config, no tests.
 existing_checks:
-  - "railway healthcheck: delivery/release remediation/release maintenance/release — Railway runs python -m todobot migrate before a deploy and switches traffic only when /healthz answers 200 (set on the service; railway.json is not read)"
+  - "railway healthcheck: delivery/release remediation/release maintenance/release — Railway runs python -m todobot migrate before a deploy and switches traffic only when /healthz answers 200 (.railway/railway.ts)"
 
 # The failures the loops must catch first. No history to take them from yet.
 pains:

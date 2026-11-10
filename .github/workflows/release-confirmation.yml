@@ -13,7 +13,6 @@ on:
       - "uv.lock"
       - "Dockerfile"
       - ".dockerignore"
-      - "railway.json"
   workflow_dispatch:
     inputs:
       sha:

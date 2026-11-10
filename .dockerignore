@@ -9,3 +9,7 @@
 .claude
 agentify
 tests
+node_modules
+.railway
+package.json
+package-lock.json
