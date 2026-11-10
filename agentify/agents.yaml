@@ -1,0 +1,5 @@
+# Agents that are steps of this project's loops. Managed with loops.py: agent-new, eval-score, outcome, check.
+# Statuses: draft (no evals yet) | evaluated (scored, below the bar or not promoted) | gate (may block) |
+#           advisory (reports, never blocks) | retired.
+
+agents: []

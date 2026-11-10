@@ -1,0 +1,54 @@
+# What agentify found in the project: the facts the map of its super-loops is drawn from. agentify rebuilds them from
+# what it sees and never asks for them twice; what only the user can say is in agentify.md next to this file.
+#
+# The map and the loops are chosen from these facts (agentify's parts/harness/profile.md, "From the profile to the map
+# and the loops"). Keep them current: when the project changes, update this file from what you see.
+#
+# A place is <super-loop>/<phase>, such as delivery/confirmation (agentify's parts/harness/super-loops/README.md).
+#
+# Found 2026-11-10: the project folder is empty. No code, no manifest, no README, no git repository, no CI, no
+# deploy, and no repository named todobot on GitHub (gh repo view gutnikov/todobot: not found). Run the setup again
+# (/agentify set up again) once the project has code, a repository or CI.
+
+version: 1
+
+# The project's own commands, as found in the repository.
+stack:
+  languages: []
+  build: null
+  test: null
+  lint: null
+
+# Where a change goes after the agent writes it, besides edit, local, commit, task and continuous, which are always
+# there. Values from a loop's trigger: ci, scheduled, preview, staging, production.
+stages: []
+
+# The super-loops the project has work for, each with where its work comes from now. No tracker, error tracker,
+# dependency bot or prototypes exist yet; the sources below are the user's.
+super_loops:
+  delivery: "the user's requests in this Claude Code session; GitHub issues once the repo exists"
+  remediation: "bugs the user hits using the bot; nothing watches production yet"
+  maintenance: "nothing yet: no dependencies; the LLM, Telegram and Google APIs once there is code"
+not_here:
+  discovery: "the user brings each idea and it gets built; no prototypes or decision records"
+
+# Where a change ends now: the last stage it reaches, and what confirms it there.
+ends_at: "nowhere yet: no code, no git repository, no CI and no deploy; a change ends in the working tree"
+
+# Where the project's own systems record the exits of its super-loops. None yet.
+trace: []
+
+# The checks the project already runs. None: no CI, no hooks, no linter config, no tests.
+existing_checks: []
+
+# The failures the loops must catch first. No history to take them from yet.
+pains: []
+
+# The spec part's facts, filled when specs are set up (agentify's parts/spec/profile.md).
+spec:
+  docs: []
+  running_app: ""
+  readers: []
+  e2e: ""
+  seeding: ""
+  risks: []

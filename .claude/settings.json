@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "agentify": {
+      "source": {
+        "source": "git",
+        "url": "git@github.com:gutnikov/agentify.git"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "agentify@agentify": true
+  }
+}
