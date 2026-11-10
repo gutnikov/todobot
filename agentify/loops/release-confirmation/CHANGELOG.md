@@ -12,3 +12,4 @@
   commit: the workflow notes the run's start and `collect --window-start` opens the window there, so the owner's
   synthetic run counts. Validated again.
 - 2026-11-10: the first real run (merge of PR #2, ba8938c) waited 30 min for a deployment that never came: the service had no deploy trigger. Deploy wait 30 → 10 min; the no-deployment hint names the trigger; new must-fire case `no-deployment` from that run. Validated again.
+- 2026-11-10: the workflow's paths drop `railway.json`: the service's settings moved to `.railway/railway.ts` and Railway's watch paths no longer list it. No change to collect or run.

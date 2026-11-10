@@ -1,0 +1,58 @@
+# The Railway project's configuration lives in .railway/railway.ts. Railway does not read that file on deploys:
+# this workflow shows the plan on a pull request that changes it, and applies it once the change is on main.
+# Variables stay in Railway (unmanaged): this repository is public.
+name: railway-config
+
+on:
+  pull_request:
+    paths:
+      - ".railway/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/railway-config.yml"
+  push:
+    branches: [main]
+    paths:
+      - ".railway/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/railway-config.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: railway-config
+  cancel-in-progress: false
+
+jobs:
+  railway-config:
+    name: railway-config
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+      - name: Install the Railway SDK (package-lock.json, no install scripts)
+        run: npm ci --ignore-scripts
+      - name: Install the railway CLI 5.71.0
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/railway.tgz" \
+            https://github.com/railwayapp/cli/releases/download/v5.71.0/railway-v5.71.0-x86_64-unknown-linux-musl.tar.gz
+          echo "2e682fd2ddf8d6fdf9e46d9d99d99646ff0022a6abb0c2bca93011348a269fb9  $RUNNER_TEMP/railway.tgz" | sha256sum -c -
+          sudo tar -xzf "$RUNNER_TEMP/railway.tgz" -C /usr/local/bin railway
+          railway --version
+      - name: Plan
+        run: |
+          railway config plan 2>&1 | tee plan.txt
+          { echo '### railway config plan'; echo '```'; cat plan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Apply
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          railway config apply --yes 2>&1 | tee apply.txt
+          { echo '### railway config apply'; echo '```'; cat apply.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
