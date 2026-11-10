@@ -87,7 +87,8 @@ The reply then goes to the Bot API at `TELEGRAM_API_BASE`.
   command is `python -m todobot serve` on `$PORT`.
 - `.railway/railway.ts`: the Railway service's settings. It builds with the Dockerfile, runs
   `python -m todobot migrate` before each deploy, checks `/healthz`, runs in one region (`ams`), and deploys a
-  push to `main` once its checks pass, but only when the push touches the app (watch paths). Railway does not
+  push to `main` that touches the app (watch paths) at once; branch protection lets into `main` only pull
+  requests whose required checks passed. Railway does not
   read the file on deploys. The `railway-config` workflow plans a change on its pull request and applies it after
   the merge. Locally, with Node 24: `npm ci --ignore-scripts && railway config plan`. The variables (bot token,
   `DATABASE_URL`, webhook secret) live only in Railway.
