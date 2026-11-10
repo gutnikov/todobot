@@ -2,7 +2,7 @@
 id: verify
 title: "Lint, format, types, unit tests and log privacy before the turn ends"
 type: stop-hook
-status: validated
+status: active
 trigger: [local, ci]
 places: [delivery/work, remediation/work, maintenance/work]
 run: ./run

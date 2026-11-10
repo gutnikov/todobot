@@ -2,7 +2,7 @@
 """collect: wait for a release of todobot on Railway, then save a snapshot of its window for `run` to judge.
 
     collect --sha SHA --out DIR [--deployment ID] [--window-start TIME|now] [--min-minutes 10] [--min-events 1]
-            [--cap-minutes 60] [--deploy-timeout-minutes 30]
+            [--cap-minutes 60] [--deploy-timeout-minutes 10]
 
 1. Waits until Railway has a deployment of the service for SHA (the newest one; --deployment picks another) and it
    reaches a final status, up to --deploy-timeout-minutes.
@@ -418,7 +418,7 @@ def main():
     ap.add_argument("--min-minutes", type=float, default=10.0)
     ap.add_argument("--min-events", type=int, default=1)
     ap.add_argument("--cap-minutes", type=float, default=60.0)
-    ap.add_argument("--deploy-timeout-minutes", type=float, default=30.0)
+    ap.add_argument("--deploy-timeout-minutes", type=float, default=10.0)
     a = ap.parse_args()
     if not (0 <= a.min_minutes <= a.cap_minutes) or a.min_events < 1:
         ap.error("need 0 <= --min-minutes <= --cap-minutes and --min-events >= 1")

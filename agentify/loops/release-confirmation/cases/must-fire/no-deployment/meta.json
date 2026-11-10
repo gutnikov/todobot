@@ -1,0 +1,28 @@
+{
+ "sha": "ba8938cad161b4c01997afa2eea94c569c23f9eb",
+ "service": {
+  "project": "73eee4ea-4c54-447e-ae52-067986b9c098",
+  "environment": "e47d2aee-700f-487f-9212-b75779a765d3",
+  "service": "bcc229e9-dfe9-4806-a327-bc3cc64076f6"
+ },
+ "params": {
+  "min_minutes": 10.0,
+  "min_events": 1,
+  "cap_minutes": 60.0,
+  "deploy_timeout_minutes": 10.0,
+  "error_limit_pct": 1.0
+ },
+ "collected_at": "2026-11-10T19:36:57.268Z",
+ "deployment": {
+  "id": null,
+  "status": "NONE",
+  "timed_out": true,
+  "created_at": null
+ },
+ "previous": null,
+ "signals": [],
+ "healthz": [],
+ "window": null,
+ "baseline": null,
+ "note": "real: 2026-11-10, merge of PR #2 (ba8938c) deployed nothing, because the service had no deploy trigger (Railway's GitHub app could not see the repository); collect waited out its deploy timeout"
+}

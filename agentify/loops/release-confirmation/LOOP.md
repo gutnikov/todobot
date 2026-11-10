@@ -2,7 +2,7 @@
 id: release-confirmation
 title: "Release confirmation: the change is there, it happened, nothing broke"
 type: release-confirmation
-status: validated
+status: active
 trigger: [production]
 places: [delivery/confirmation, remediation/confirmation, maintenance/confirmation]
 run: ./run
@@ -54,7 +54,7 @@ the snapshot, so it is fast and deterministic, and recorded windows are its case
 
 1. Waits until `railway deployment list` has a deployment of the service for the commit (its newest one) and that
    deployment reaches a final status: SUCCESS, FAILED, CRASHED, REMOVED or SKIPPED. The limit is
-   `--deploy-timeout-minutes` (30). Railway creates no GitHub deployments, so collect polls Railway.
+   `--deploy-timeout-minutes` (10; a build takes 1–2 min). Railway creates no GitHub deployments, so collect polls Railway.
 2. Finds the previous version: the newest earlier deployment of another commit that has log lines. For caba438 there
    is none, since all four deployments are of caba438.
 3. Works out the signals. It reads the `prod:` lines (`` `event` = `start` ``) of the files under
