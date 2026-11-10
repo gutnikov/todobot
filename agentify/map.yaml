@@ -6,43 +6,47 @@
 #
 # A place is <super-loop>/<phase>, such as delivery/confirmation (agentify's parts/harness/super-loops/README.md).
 #
-# Found 2026-11-10: the project folder is empty. No code, no manifest, no README, no CI and no deploy. The repository
-# is github.com/gutnikov/todobot (public, main), holding only agentify/ and the Claude Code config. Run the setup again
-# (/agentify set up again) once the project has code, a repository or CI.
+# Found 2026-11-10, after the skeleton (PR #1): a Python 3.12 service in github.com/gutnikov/todobot (public, main),
+# deployed to Railway (project todobot, service todobot, region ams) with Postgres on Neon (project todobot,
+# aws-eu-central-1). No CI and no hooks yet: `make ci` exists, but only the agent runs it, by hand.
 
 version: 1
 
 # The project's own commands, as found in the repository.
 stack:
-  languages: []
-  build: null
-  test: null
-  lint: null
+  languages: [python]
+  build: "uv sync --locked"
+  test: "make ci (ruff check, ruff format --check, mypy src, pytest: unit + acceptance against pgserver Postgres)"
+  lint: "uv run ruff check && uv run ruff format --check && uv run mypy src"
 
 # Where a change goes after the agent writes it, besides edit, local, commit, task and continuous, which are always
 # there. Values from a loop's trigger: ci, scheduled, preview, staging, production.
-stages: []
+stages: [production]
 
 # The super-loops the project has work for, each with where its work comes from now. No tracker, error tracker,
 # dependency bot or prototypes exist yet; the sources below are the user's.
 super_loops:
   delivery: "the user's requests in this Claude Code session; GitHub issues of gutnikov/todobot (none yet)"
-  remediation: "bugs the user hits using the bot; nothing watches production yet"
-  maintenance: "nothing yet: no dependencies; the LLM, Telegram and Google APIs once there is code"
+  remediation: "bugs the user hits using the bot; Railway logs, read by hand; no alerts"
+  maintenance: "uv.lock dependencies (aiogram, SQLAlchemy, asyncpg, Alembic); nothing watches them"
 not_here:
   discovery: "the user brings each idea and it gets built; no prototypes or decision records"
 
 # Where a change ends now: the last stage it reaches, and what confirms it there.
-ends_at: "main on github.com/gutnikov/todobot: no code, no CI and no deploy yet; nothing checks a change there"
+ends_at: "production on Railway: a push to main that touches the app deploys it (watch paths src/, pyproject.toml, uv.lock, Dockerfile, .dockerignore, railway.json); nothing confirms it but the agent reading railway logs by hand"
 
 # Where the project's own systems record the exits of its super-loops. None yet.
-trace: []
+trace:
+  - "agentify/releases.jsonl"
 
 # The checks the project already runs. None: no CI, no hooks, no linter config, no tests.
-existing_checks: []
+existing_checks:
+  - "railway healthcheck: delivery/release remediation/release maintenance/release — Railway runs python -m todobot migrate before a deploy and switches traffic only when /healthz answers 200 (set on the service; railway.json is not read)"
 
 # The failures the loops must catch first. No history to take them from yet.
-pains: []
+pains:
+  - "user content in logs: delivery/work — message text reached the logs twice in the skeleton (DB errors, invalid updates); caught by a security review and the gate, not by a loop"
+  - "release config: delivery/release — the first deploy failed (two regions on the Hobby plan) and the second ran without migrations (railway.json ignored); caught by hand"
 
 # The spec part's facts, filled when specs are set up (agentify's parts/spec/profile.md).
 spec:
