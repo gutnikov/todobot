@@ -8,7 +8,8 @@
 #
 # Found 2026-11-10, after the skeleton (PR #1): a Python 3.12 service in github.com/gutnikov/todobot (public, main),
 # deployed to Railway (project todobot, service todobot, region ams) with Postgres on Neon (project todobot,
-# aws-eu-central-1). No CI and no hooks yet: `make ci` exists, but only the agent runs it, by hand.
+# aws-eu-central-1). Since PR #2: GitHub Actions (verify, acceptance-gate required on main; release-confirmation after
+# each deploy) and a Stop hook (verify, fast).
 
 version: 1
 
@@ -21,19 +22,19 @@ stack:
 
 # Where a change goes after the agent writes it, besides edit, local, commit, task and continuous, which are always
 # there. Values from a loop's trigger: ci, scheduled, preview, staging, production.
-stages: [production]
+stages: [ci, production]
 
 # The super-loops the project has work for, each with where its work comes from now. No tracker, error tracker,
 # dependency bot or prototypes exist yet; the sources below are the user's.
 super_loops:
   delivery: "the user's requests in this Claude Code session; GitHub issues of gutnikov/todobot (none yet)"
   remediation: "bugs the user hits using the bot; Railway logs, read by hand; no alerts"
-  maintenance: "uv.lock dependencies (aiogram, SQLAlchemy, asyncpg, Alembic); nothing watches them"
+  maintenance: "uv.lock dependencies; nothing watches them"
 not_here:
   discovery: "the user brings each idea and it gets built; no prototypes or decision records"
 
 # Where a change ends now: the last stage it reaches, and what confirms it there.
-ends_at: "production on Railway: a push to main that touches the app deploys it (watch paths src/, pyproject.toml, uv.lock, Dockerfile, .dockerignore, railway.json); nothing confirms it but the agent reading railway logs by hand"
+ends_at: "production on Railway: a push to main that touches the app (watch paths src/, pyproject.toml, uv.lock, Dockerfile, .dockerignore, railway.json) deploys once its checks pass; release-confirmation judges every such deploy"
 
 # Where the project's own systems record the exits of its super-loops. None yet.
 trace:

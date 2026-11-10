@@ -70,7 +70,8 @@ def judge(meta, new, prev):
     if status != "SUCCESS" or at_end in ("FAILED", "CRASHED"):
         if not dep.get("id"):
             seen = "no deployment of %s appeared in %s min: check that the push touched Railway's watch paths " \
-                   "and that the GitHub integration is connected" % (v, params["deploy_timeout_minutes"])
+                   "and that the service has a deploy trigger for main (Railway: deploymentTriggers; its GitHub app " \
+                   "must see the repository)" % (v, params["deploy_timeout_minutes"])
         elif dep.get("timed_out"):
             seen = "deployment %s of %s was still %s after %s min: see it in Railway" % (
                 did, v, status, params["deploy_timeout_minutes"])

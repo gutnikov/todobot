@@ -2,7 +2,7 @@
 id: acceptance-gate
 title: "Approved criteria green, on the approved tests, red before the work"
 type: acceptance-loop
-status: validated
+status: active
 trigger: [ci]
 places: [delivery/gate, delivery/oracle]
 run: ./run
