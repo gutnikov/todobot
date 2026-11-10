@@ -1,0 +1,64 @@
+"""Configuration from environment variables (the contract's "Environment" table)."""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+
+DEFAULT_API_BASE = "https://api.telegram.org"
+DEFAULT_PORT = 8080
+DEFAULT_VERSION = "dev"
+
+
+class ConfigError(Exception):
+    """A required variable is missing or a value is invalid."""
+
+
+def app_version(env: Mapping[str, str] | None = None) -> str:
+    """`APP_VERSION`, else Railway's `RAILWAY_GIT_COMMIT_SHA`, else `dev`; empty values count as unset."""
+    env = os.environ if env is None else env
+    return env.get("APP_VERSION") or env.get("RAILWAY_GIT_COMMIT_SHA") or DEFAULT_VERSION
+
+
+def require(env: Mapping[str, str], name: str) -> str:
+    value = env.get(name, "")
+    if not value:
+        raise ConfigError(f"{name} is required")
+    return value
+
+
+def _port(env: Mapping[str, str]) -> int:
+    raw = env.get("PORT") or str(DEFAULT_PORT)
+    try:
+        port = int(raw)
+    except ValueError:
+        raise ConfigError(f"PORT must be an integer, got {raw!r}") from None
+    if not 0 <= port <= 65535:
+        raise ConfigError(f"PORT must be between 0 and 65535, got {port}")
+    return port
+
+
+@dataclass(frozen=True, kw_only=True)
+class Settings:
+    """What `serve` needs. Secrets stay out of repr, so a logged Settings leaks nothing."""
+
+    database_url: str = field(repr=False)
+    bot_token: str = field(repr=False)
+    webhook_secret: str = field(repr=False)
+    api_base: str = DEFAULT_API_BASE
+    port: int = DEFAULT_PORT
+    version: str = DEFAULT_VERSION
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
+        env = os.environ if env is None else env
+        return cls(
+            database_url=require(env, "DATABASE_URL"),
+            bot_token=require(env, "TELEGRAM_BOT_TOKEN"),
+            # An empty secret would switch the webhook check off, so it is required like the token.
+            webhook_secret=require(env, "TELEGRAM_WEBHOOK_SECRET"),
+            api_base=env.get("TELEGRAM_API_BASE") or DEFAULT_API_BASE,
+            port=_port(env),
+            version=app_version(env),
+        )

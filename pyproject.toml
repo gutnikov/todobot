@@ -1,0 +1,77 @@
+[project]
+name = "todobot"
+version = "0.1.0"
+description = "A Telegram bot that takes in tasks as text, voice or pictures."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "aiogram>=3.31.0",
+    "aiohttp>=3.14.5",
+    "alembic>=1.20.1",
+    "asyncpg>=0.32.0",
+    "pydantic>=2.13.5",
+    "sqlalchemy[asyncio]>=2.1.8",
+]
+
+[build-system]
+requires = ["hatchling>=1.29"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/todobot"]
+
+[tool.hatch.build]
+# The editable install always puts src/ on sys.path, so `python -m todobot` resolves
+# as soon as src/todobot exists, without a rebuild.
+dev-mode-dirs = ["src"]
+
+[tool.uv]
+package = true
+
+[dependency-groups]
+dev = [
+    "httpx==0.28.1",
+    "mypy==2.4.1",
+    "pgserver==0.1.4",
+    "psycopg[binary]==3.3.8",
+    "pytest==9.2.0",
+    "pytest-timeout==2.4.0",
+    "ruff==0.17.4",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+markers = [
+    "acceptance: black-box acceptance test that starts the app as a process (tests/acceptance)",
+]
+xfail_strict = true
+timeout = 180
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["src", "tests"]
+# The approved acceptance tests are the oracle: hash-checked, owned by the test writer, never reformatted here.
+extend-exclude = ["tests/acceptance"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "N", "UP", "B", "A", "C4", "SIM", "PIE", "RET", "PT", "PTH", "ASYNC", "RUF",
+    "S",    # bandit
+    "T20",  # no print(): every line on stdout must be a JSON log line
+]
+# The bot speaks Russian: Cyrillic letters that look like Latin ones are not a mistake here.
+ignore = ["RUF001"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]  # assert; test tokens and secrets are fake
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+
+[tool.alembic]
+# For the alembic CLI (`uv run alembic revision --autogenerate -m "..."`); the app runs migrations with
+# `python -m todobot migrate`, which finds them as the package resource todobot:migrations.
+script_location = "%(here)s/src/todobot/migrations"
