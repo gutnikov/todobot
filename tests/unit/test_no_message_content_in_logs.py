@@ -9,15 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
-import sys
+from typing import Any
 
 import psycopg
 import pytest
-from fakes import HEADER, SECRET, VERSION, message_update, running_app
+from fakes import HEADER, SECRET, VERSION, logs_on_stdout, message_update, running_app
 
 from todobot import texts
-from todobot.logs import REDACTED, JsonFormatter, redact
+from todobot.logs import REDACTED, redact
 from todobot.web import WEBHOOK_PATH
 
 USER = 333_333_333
@@ -56,18 +55,8 @@ def test_failed_insert_logs_handler_error_without_the_message(migrated_database_
     with psycopg.connect(migrated_database_url, autocommit=True) as conn:
         conn.execute(statement)
 
-    # The production formatter, on stdout, as `serve` has it.
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(JsonFormatter(VERSION))
-    root = logging.getLogger()
-    level = root.level
-    root.addHandler(handler)
-    root.setLevel(logging.INFO)
-    try:
+    with logs_on_stdout():
         calls = asyncio.run(_deliver(migrated_database_url, message_update(USER, **content)))
-    finally:
-        root.removeHandler(handler)
-        root.setLevel(level)
     stdout = capsys.readouterr().out
 
     assert calls == [("sendMessage", {"chat_id": str(USER), "text": texts.ERROR})]
@@ -81,6 +70,43 @@ def test_failed_insert_logs_handler_error_without_the_message(migrated_database_
     assert "[parameters:" not in errors[0]["exc"], "database errors must not carry the statement's parameters"
     for marker in MARKERS:
         assert marker not in stdout
+
+
+# An update the Bot API types cannot validate: pydantic's error quotes its input, the user's text among it.
+# Markers in this file are ASCII: the JSON lines escape non-ASCII text, so a Cyrillic marker would hide from `in`.
+INVALID_UPDATES = {
+    "message-fields-missing": ({"update_id": 77, "message": {"text": "QV5-тайна в сообщении"}}, 77),
+    "message-not-an-object": ({"update_id": 78, "message": "QV5-тайна вместо сообщения"}, 78),
+    "update-not-an-object": (["QV5-тайна вместо апдейта"], None),
+}
+
+
+async def _post_only(database_url: str, body: Any) -> tuple[int, list[tuple[str, dict[str, str]]]]:
+    async with running_app(database_url) as (client, api):
+        response = await client.post(WEBHOOK_PATH, json=body, headers={HEADER: SECRET})
+    # Leaving running_app shut the app down, which waits for the updates it was still handling.
+    return response.status, api.calls
+
+
+@pytest.mark.parametrize("case", sorted(INVALID_UPDATES))
+def test_invalid_update_logs_one_line_without_its_content(migrated_database_url, capsys, case):
+    body, update_id = INVALID_UPDATES[case]
+
+    with logs_on_stdout():
+        status, calls = asyncio.run(_post_only(migrated_database_url, body))
+    stdout = capsys.readouterr().out
+
+    assert status == 200  # the webhook's answer is as before
+    assert calls == []  # nothing was handled
+    records = [json.loads(line) for line in stdout.splitlines()]
+    invalid = [record for record in records if record["event"] == "update_invalid"]
+    assert len(invalid) == 1, stdout
+    assert invalid[0]["level"] == "ERROR"
+    assert invalid[0]["version"] == VERSION
+    assert invalid[0]["error"] == "ValidationError"
+    assert invalid[0]["update_id"] == update_id
+    assert "QV5" not in stdout
+    assert "never retrieved" not in stdout
 
 
 @pytest.mark.parametrize(

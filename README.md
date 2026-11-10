@@ -11,8 +11,9 @@ What it does now:
 - `GET /healthz` answers 200 `{"status": "ok", "version": …}` when the database answers, else 503 (SK-4).
 - Every line on stdout is one JSON object with `level`, `event` and `version`. A handler that fails logs
   `event=handler_error`, apologises in the chat, and the server keeps running (SK-5). What users write stays out
-  of the logs: database errors carry no parameters, and the message's text and caption are cut out of the
-  `handler_error` traceback.
+  of the logs: database errors carry no parameters, the message's text and caption are cut out of the
+  `handler_error` traceback, and an update that does not validate is one `update_invalid` line with field
+  locations and error types only.
 
 Updates come in by webhook (`POST /telegram/webhook`, checked against `TELEGRAM_WEBHOOK_SECRET`). Replies are Bot
 API `sendMessage` calls. The app never calls `setWebhook` itself.

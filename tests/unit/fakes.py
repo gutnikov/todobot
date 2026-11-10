@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import itertools
+import logging
+import sys
 import time
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from typing import Any
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from todobot.config import Settings
+from todobot.logs import JsonFormatter
 from todobot.web import build_app
 
 TOKEN = "123456789:unit-test-token"
@@ -76,3 +80,20 @@ async def running_app(database_url: str) -> AsyncIterator[tuple[TestClient[Any, 
         )
         async with TestClient(TestServer(build_app(settings))) as client:
             yield client, api
+
+
+@contextmanager
+def logs_on_stdout() -> Iterator[None]:
+    """Log as `serve` does (the production formatter, on stdout, from INFO), for capsys to read."""
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JsonFormatter(VERSION))
+    root = logging.getLogger()
+    level = root.level
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+    try:
+        yield
+        gc.collect()  # asyncio logs a failed task nobody awaited when it is collected: make that happen in here
+    finally:
+        root.removeHandler(handler)
+        root.setLevel(level)
