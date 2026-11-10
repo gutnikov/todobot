@@ -35,3 +35,6 @@ def test_sk1_start_writes_start_log_line_with_version(launch_app, fake_api, data
     assert find_records(lines, event="start", version=APP_VERSION), (
         f"no stdout line with event=start and version={APP_VERSION!r}; stdout was:\n" + "\n".join(lines)
     )
+
+
+# scratch: an approved test changed without an H5 approval

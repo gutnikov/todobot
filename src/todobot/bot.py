@@ -135,6 +135,5 @@ async def on_error(event: ErrorEvent, bot: Bot) -> None:
             "apology_failed",
             level=logging.ERROR,
             update_id=event.update.update_id,
-            error=type(exc).__name__,
-            exc=redact(format_exception(exc), _content(message)),
+            exc_info=exc,
         )
