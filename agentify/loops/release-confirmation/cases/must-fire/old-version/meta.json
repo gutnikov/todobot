@@ -1,0 +1,55 @@
+{
+ "sha": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4",
+ "service": {
+  "project": "73eee4ea-4c54-447e-ae52-067986b9c098",
+  "environment": "e47d2aee-700f-487f-9212-b75779a765d3",
+  "service": "bcc229e9-dfe9-4806-a327-bc3cc64076f6"
+ },
+ "params": {
+  "min_minutes": 10.0,
+  "min_events": 1,
+  "cap_minutes": 60.0,
+  "deploy_timeout_minutes": 30.0,
+  "error_limit_pct": 1.0
+ },
+ "collected_at": "2026-11-10T19:36:40.527Z",
+ "deployment": {
+  "id": "fc7d52ae-022b-4821-9307-3b5b37658e61",
+  "status": "SUCCESS",
+  "timed_out": false,
+  "created_at": "2026-11-10T17:52:37.287Z",
+  "status_at_end": "SUCCESS",
+  "lines_cut": false
+ },
+ "previous": null,
+ "signals": [
+  {
+   "event": "start",
+   "source": "agentify/specs/requirements/skeleton.md"
+  },
+  {
+   "event": "inbox_saved",
+   "source": "agentify/specs/requirements/skeleton.md"
+  }
+ ],
+ "healthz": [
+  {
+   "at": "2026-11-10T19:36:33.828Z",
+   "status": 200,
+   "version": "3d27709bb042abb454929c4862f59aed7628ede1"
+  },
+  {
+   "at": "2026-11-10T19:36:36.386Z",
+   "status": 200,
+   "version": "3d27709bb042abb454929c4862f59aed7628ede1"
+  }
+ ],
+ "window": {
+  "start": "2026-11-10T17:53:06.649Z",
+  "end": "2026-11-10T18:03:39.542Z",
+  "ended": "signals",
+  "start_from": "server_started"
+ },
+ "baseline": null,
+ "note": "Derived from the real first release: /healthz answered an older commit, 3d27709, both times, as when Railway reports SUCCESS while the old deployment still serves."
+}

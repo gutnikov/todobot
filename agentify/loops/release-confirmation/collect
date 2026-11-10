@@ -1,0 +1,437 @@
+#!/usr/bin/env python3
+"""collect: wait for a release of todobot on Railway, then save a snapshot of its window for `run` to judge.
+
+    collect --sha SHA --out DIR [--deployment ID] [--window-start TIME|now] [--min-minutes 10] [--min-events 1]
+            [--cap-minutes 60] [--deploy-timeout-minutes 30]
+
+1. Waits until Railway has a deployment of the service for SHA (the newest one; --deployment picks another) and it
+   reaches a final status, up to --deploy-timeout-minutes.
+2. Finds the previous version: the newest earlier deployment of another commit that ran (it has log lines).
+3. Works out the signals: the `prod:` events (`event` = `name`) of the requirement files under
+   agentify/specs/requirements/ changed between the previous version's commit and SHA (all of them for the first
+   release). No requirement changed: no signal.
+4. Waits out the window: from the new version's `server_started` line, or from --window-start when that is later
+   (a workflow_dispatch run passes its own start, so a synthetic run sent after it counts), at least --min-minutes
+   and at least --min-events lines of each signal, up to --cap-minutes. /healthz is asked at the start and the end.
+5. Saves DIR/meta.json, DIR/new.jsonl (the deployment's lines up to its `server_started`, with its pre-deploy, and
+   the window's lines) and DIR/previous.jsonl (the previous version's lines over the same length of time just
+   before the window).
+
+Privacy: the repository and its Actions artifacts are public. A saved or printed line keeps only time, level,
+event, version, logger and an error's type name; everything else (user ids, messages, request lines, headers,
+tracebacks) is dropped here, before anything is written.
+
+Runs with the railway CLI's login (the owner's on the agent's machine, RAILWAY_TOKEN in CI). Exit 0 when the snapshot
+is saved, whatever it shows; 2 when it could not be collected. Python 3.9+, no dependencies.
+"""
+import argparse
+import datetime
+import json
+import pathlib
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+PROJECT = "73eee4ea-4c54-447e-ae52-067986b9c098"
+ENVIRONMENT = "e47d2aee-700f-487f-9212-b75779a765d3"  # production
+SERVICE = "bcc229e9-dfe9-4806-a327-bc3cc64076f6"  # todobot
+HEALTHZ = "https://todobot-production-dbb2ecd7.up.railway.app/healthz"
+REQUIREMENTS = "agentify/specs/requirements"
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+FINAL = {"SUCCESS", "FAILED", "CRASHED", "REMOVED", "SKIPPED"}
+RAN = {"SUCCESS", "REMOVED", "SLEEPING"}  # statuses of a deployment that may have served
+ERROR_LIMIT_PCT = 1.0  # the absolute limit on the error rate when the baseline is weak
+LOG_LIMIT = 5000  # lines per `railway logs` call
+GRACE = datetime.timedelta(seconds=30)  # Railway stamps lines a few seconds after they are written
+DEPLOY_POLL = 15
+
+LEVELS = {"debug", "info", "warn", "warning", "error", "err", "critical", "crit", "fatal", "alert", "emerg", "panic",
+          "notice", "trace"}
+NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_.:-]{0,79}$")
+VERSION = re.compile(r"^(?:[0-9a-f]{7,40}|dev)$")
+ERROR_TYPE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)(?::\s|:?$)")
+PROD = re.compile(r"^\W*prod\W*:", re.I)
+SIGNAL = re.compile(r"`event`\s*=\s*`([A-Za-z0-9_.:-]+)`")
+
+
+class Failed(Exception):
+    pass
+
+
+def say(msg):
+    print("collect: %s" % msg, file=sys.stderr, flush=True)
+
+
+# ---------------------------------------------------------------- time
+
+def parse_time(s):
+    """An ISO 8601 time with any number of fraction digits (Railway writes nanoseconds) as an aware UTC datetime."""
+    m = re.match(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d+))?(Z|[+-]\d\d:?\d\d)?$", s or "")
+    if not m:
+        return None
+    dt = datetime.datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S")
+    micro = int((m.group(2) or "0")[:6].ljust(6, "0"))
+    tz = m.group(3) or "Z"
+    offset = datetime.timedelta(0)
+    if tz != "Z":
+        sign = -1 if tz[0] == "-" else 1
+        hh, mm = int(tz[1:3]), int(tz[-2:])
+        offset = sign * datetime.timedelta(hours=hh, minutes=mm)
+    return (dt.replace(microsecond=micro) - offset).replace(tzinfo=datetime.timezone.utc)
+
+
+def fmt(dt):
+    """Milliseconds, UTC, `Z`: these strings sort the way the times do."""
+    return dt.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def now():
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+# ---------------------------------------------------------------- privacy
+
+def error_type(value):
+    """A Python exception's type name from an `error` field or the last line of a traceback; None for free text."""
+    if not isinstance(value, str):
+        return None
+    lines = [l for l in value.strip().splitlines() if l.strip()]
+    if not lines:
+        return None
+    m = ERROR_TYPE.match(lines[-1].strip())
+    if not m or not m.group(1).split(".")[-1][:1].isupper():
+        return None
+    return m.group(1)[:100]
+
+
+def sanitize(raw):
+    """One Railway log line, as `railway logs --json` gives it, reduced to the fields that may be public."""
+    t = parse_time(raw.get("timestamp"))
+    if t is None:
+        return None
+    line = {"time": fmt(t)}
+    level = str(raw.get("level") or "").lower()
+    line["level"] = level if level in LEVELS else "other"
+    for key, pattern in (("event", NAME), ("logger", NAME), ("version", VERSION)):
+        value = raw.get(key)
+        if isinstance(value, str) and value:
+            line[key] = value if pattern.match(value) else "other"
+    err = error_type(raw.get("error")) or error_type(raw.get("exc"))
+    if err:
+        line["error"] = err
+    return line
+
+
+# ---------------------------------------------------------------- railway
+
+def railway(*args):
+    """The CLI's stdout; three tries, since a window can last an hour and the network can blink."""
+    cmd = ["railway"] + list(args)
+    problem = ""
+    for attempt in range(3):
+        if attempt:
+            time.sleep(10 * attempt)
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=180, stdin=subprocess.DEVNULL)
+        except FileNotFoundError:
+            raise Failed("the railway CLI is not installed")
+        except subprocess.TimeoutExpired:
+            problem = "timed out"
+            continue
+        if p.returncode == 0:
+            return p.stdout
+        err = [l for l in p.stderr.splitlines() if l.strip()]
+        problem = "exit %d: %s" % (p.returncode, (err[-1] if err else "")[:200])
+    raise Failed("railway %s failed (%s)" % (" ".join(args[:2]), problem))
+
+
+def deployments():
+    out = railway("deployment", "list", "-p", PROJECT, "-e", ENVIRONMENT, "-s", SERVICE, "--json", "--limit", "50")
+    items = json.loads(out)
+    for d in items:
+        d["_created"] = parse_time(d.get("createdAt"))
+        d["_sha"] = (d.get("meta") or {}).get("commitHash") or ""
+    return sorted(items, key=lambda d: d["_created"], reverse=True)
+
+
+def fetch(deployment_id, since, until):
+    """The deployment's lines stamped in [since, until], sanitized, oldest first, and whether the limit cut them."""
+    margin = datetime.timedelta(seconds=1)  # Railway compares nanoseconds; the bounds here are milliseconds
+    out = railway("logs", deployment_id, "-p", PROJECT, "-e", ENVIRONMENT, "-s", SERVICE, "--deployment", "--json",
+                  "--since", fmt(since - margin), "--until", fmt(until + margin), "--lines", str(LOG_LIMIT))
+    lines = []
+    count = 0
+    for text in out.splitlines():
+        text = text.strip()
+        if not text.startswith("{"):
+            continue
+        count += 1
+        try:
+            line = sanitize(json.loads(text))
+        except ValueError:
+            continue
+        if line and fmt(since) <= line["time"] <= fmt(until):
+            lines.append(line)
+    lines.sort(key=lambda l: l["time"])
+    return lines, count >= LOG_LIMIT
+
+
+def has_lines(deployment_id):
+    out = railway("logs", deployment_id, "-p", PROJECT, "-e", ENVIRONMENT, "-s", SERVICE, "--deployment", "--json",
+                  "--lines", "1")
+    return any(l.strip().startswith("{") for l in out.splitlines())
+
+
+def probe():
+    at = fmt(now())
+    req = urllib.request.Request(HEALTHZ, headers={"User-Agent": "todobot-release-confirmation"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            status, body = r.status, r.read()
+    except urllib.error.HTTPError as e:
+        status, body = e.code, e.read()
+    except Exception as e:  # unreachable: no version
+        return {"at": at, "status": None, "version": None, "error": type(e).__name__}
+    try:
+        version = json.loads(body.decode("utf-8")).get("version")
+    except (ValueError, AttributeError):
+        version = None
+    if isinstance(version, str) and not VERSION.match(version):
+        version = "other"
+    return {"at": at, "status": status, "version": version if isinstance(version, str) else None}
+
+
+# ---------------------------------------------------------------- git
+
+def git(*args):
+    """git at the repository's top level, so that pathspecs such as REQUIREMENTS mean what they say."""
+    here = pathlib.Path(__file__).resolve().parent
+    top = subprocess.run(["git", "-C", str(here), "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    p = subprocess.run(["git", "-C", top.stdout.strip() or str(here)] + list(args), capture_output=True, text=True)
+    if p.returncode != 0:
+        raise Failed("git %s failed: %s" % (args[0], p.stderr.strip()[:200]))
+    return p.stdout
+
+
+def full_sha(sha):
+    if not re.match(r"^[0-9a-f]{7,40}$", sha or ""):
+        raise Failed("--sha must be a commit SHA (7 to 40 hex digits): %r" % sha)
+    try:
+        return git("rev-parse", "--verify", "--quiet", sha + "^{commit}").strip()
+    except Failed:
+        if len(sha) == 40:
+            return sha
+        raise Failed("commit %s is not in this repository (in CI, check out with fetch-depth: 0)" % sha)
+
+
+def signals(previous_sha, sha):
+    """[{event, source}] from the `prod:` lines of the requirement files changed from previous_sha to sha."""
+    base = previous_sha or EMPTY_TREE
+    if previous_sha:
+        try:
+            git("cat-file", "-e", previous_sha + "^{commit}")
+        except Failed:
+            raise Failed("the previous version's commit %s is not in this repository (in CI, check out with "
+                         "fetch-depth: 0)" % previous_sha[:7])
+    changed = [p for p in git("diff", "--name-only", "--diff-filter=d", base, sha, "--", REQUIREMENTS).splitlines()
+               if p.endswith(".md")]
+    found, seen = [], set()
+    for path in changed:
+        for line in git("show", "%s:%s" % (sha, path)).splitlines():
+            if PROD.match(line):
+                for event in SIGNAL.findall(line):
+                    if event not in seen:
+                        seen.add(event)
+                        found.append({"event": event, "source": path})
+    return found
+
+
+# ---------------------------------------------------------------- the window
+
+def needed_at(lines, sha, start, sigs, min_events):
+    """When the last signal reached min_events (a time string), start when there is no signal, None if not yet."""
+    if not sigs:
+        return start
+    at = start
+    for s in sigs:
+        times = [l["time"] for l in lines if l.get("event") == s["event"] and l.get("version") == sha
+                 and l["time"] >= start]
+        if len(times) < min_events:
+            return None
+        at = max(at, times[min_events - 1])
+    return at
+
+
+def collect(a):
+    sha = full_sha(a.sha)
+    out = pathlib.Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    params = {"min_minutes": a.min_minutes, "min_events": a.min_events, "cap_minutes": a.cap_minutes,
+              "deploy_timeout_minutes": a.deploy_timeout_minutes, "error_limit_pct": ERROR_LIMIT_PCT}
+    meta = {"sha": sha, "service": {"project": PROJECT, "environment": ENVIRONMENT, "service": SERVICE},
+            "params": params, "collected_at": None, "deployment": None, "previous": None, "signals": [],
+            "healthz": [], "window": None, "baseline": None}
+
+    # 1. the deployment of the commit, in a final status
+    deadline = now() + datetime.timedelta(minutes=a.deploy_timeout_minutes)
+    last, target, deps = None, None, []
+    while True:
+        deps = deployments()
+        if a.deployment:
+            target = next((d for d in deps if d["id"] == a.deployment), None)
+            if target is None:
+                raise Failed("no deployment %s among the service's newest 50" % a.deployment)
+        else:
+            target = next((d for d in deps if d["_sha"] == sha), None)
+        status = target["status"] if target else "NONE"
+        if status != last:
+            say("deployment of %s: %s%s" % (sha[:7], (target["id"][:8] + " ") if target else "", status))
+            last = status
+        if status in FINAL or now() >= deadline:
+            break
+        time.sleep(DEPLOY_POLL)
+    timed_out = status not in FINAL
+    meta["deployment"] = {"id": target["id"] if target else None, "status": status, "timed_out": timed_out,
+                          "created_at": fmt(target["_created"]) if target else None}
+    if target and target["_sha"] != sha:
+        raise Failed("deployment %s is of commit %s, not %s" % (target["id"][:8], target["_sha"][:7], sha[:7]))
+
+    if status != "SUCCESS":
+        lines = []
+        if target:  # a crash leaves lines worth reading; a failed build has none
+            lines, _ = fetch(target["id"], target["_created"] - datetime.timedelta(minutes=1), now())
+        return save(out, meta, lines, None)
+
+    # 2. the previous version
+    created = target["_created"]
+    previous = None
+    for d in [d for d in deps if d["_created"] < created and d["_sha"] and d["_sha"] != sha
+              and d["status"] in RAN][:5]:
+        if has_lines(d["id"]):
+            previous = d
+            break
+    meta["previous"] = {"sha": previous["_sha"], "deployment_id": previous["id"]} if previous else None
+    say("previous version: %s" % ("%s (deployment %s)" % (previous["_sha"][:7], previous["id"][:8])
+                                  if previous else "none, the first release"))
+
+    # 3. the signals
+    sigs = signals(previous["_sha"] if previous else None, sha)
+    meta["signals"] = sigs
+    say("signals: %s" % (", ".join("%s (%s)" % (s["event"], s["source"]) for s in sigs) or
+                         "none: no requirement changed, checks 1 and 3 only"))
+
+    # 4. the window
+    since = created - datetime.timedelta(minutes=1)
+    first_hour = since + datetime.timedelta(minutes=60)
+    for attempt in range(5):  # the server_started line can reach Railway's logs a few seconds after SUCCESS
+        if attempt:
+            time.sleep(15)
+        lines, _ = fetch(target["id"], since, min(now(), first_hour))
+        started = [l["time"] for l in lines if l.get("event") == "server_started" and l.get("version") == sha]
+        if started:
+            break
+    served = started[0] if started else fmt(created)
+    start, start_from = served, "server_started" if started else "created_at"
+    if a.window_start and fmt(a.window_start) > served:
+        start, start_from = fmt(a.window_start), "window_start"
+    start_dt = parse_time(start)
+    min_end = start_dt + datetime.timedelta(minutes=a.min_minutes)
+    cap_end = start_dt + datetime.timedelta(minutes=a.cap_minutes)
+    poll = max(5.0, min(60.0, a.cap_minutes * 60 / 20))
+    meta["healthz"].append(probe())
+    say("window from %s (%s): at least %s min and %d of each signal, cap %s min" % (
+        start, start_from.replace("_", " "), a.min_minutes, a.min_events, a.cap_minutes))
+    reason = None
+    while True:
+        t = now()
+        lines, _ = fetch(target["id"], start_dt, t)
+        at = needed_at(lines, sha, start, sigs, a.min_events)
+        if at is not None:
+            end = max(min_end, parse_time(at))
+            if end <= cap_end and t >= end + GRACE:
+                reason = "signals" if sigs else "minimum"
+                break
+        if t >= cap_end + GRACE:
+            end, reason = cap_end, "cap"
+            break
+        current = next((d for d in deployments() if d["id"] == target["id"]), None)
+        current_status = current["status"] if current else "NONE"
+        if current_status != "SUCCESS":
+            end, reason = min(t, cap_end), "status %s" % current_status
+            break
+        counts = ", ".join("%s %d/%d" % (s["event"], sum(1 for l in lines if l.get("event") == s["event"]
+                                                          and l.get("version") == sha and l["time"] >= start),
+                                         a.min_events) for s in sigs)
+        say("waiting: %.1f of %s min%s" % ((t - start_dt).total_seconds() / 60, a.min_minutes,
+                                           (", " + counts) if counts else ""))
+        time.sleep(poll)
+    meta["healthz"].append(probe())
+    meta["deployment"]["status_at_end"] = (next((d for d in deployments() if d["id"] == target["id"]), {})
+                                           .get("status", "NONE"))
+
+    # 5. the snapshot: the deployment's lines up to its start (the pre-deploy migration is there), then the window's
+    if start == served:
+        lines, cut = fetch(target["id"], since, end)
+    else:
+        early, early_cut = fetch(target["id"], since, parse_time(served))
+        lines, cut = fetch(target["id"], start_dt, end)
+        lines, cut = early + lines, early_cut or cut
+    meta["window"] = {"start": start, "end": fmt(end), "ended": reason, "start_from": start_from}
+    meta["deployment"]["lines_cut"] = cut
+    prev_lines = None
+    if previous:
+        b_start = start_dt - (end - start_dt)
+        prev_lines, prev_cut = fetch(previous["id"], b_start, start_dt)
+        meta["baseline"] = {"start": fmt(b_start), "end": start, "lines_cut": prev_cut}
+    return save(out, meta, lines, prev_lines)
+
+
+def save(out, meta, lines, prev_lines):
+    meta["collected_at"] = fmt(now())
+    (out / "meta.json").write_text(json.dumps(meta, indent=1) + "\n", encoding="utf-8")
+    (out / "new.jsonl").write_text("".join(json.dumps(l) + "\n" for l in lines), encoding="utf-8")
+    prev = out / "previous.jsonl"
+    if prev_lines is not None:
+        prev.write_text("".join(json.dumps(l) + "\n" for l in prev_lines), encoding="utf-8")
+    elif prev.exists():
+        prev.unlink()
+    w = meta.get("window") or {}
+    say("saved %s: deployment %s, %d lines%s%s" % (
+        out, meta["deployment"]["status"], len(lines),
+        ", window %s to %s (%s)" % (w["start"], w["end"], w["ended"]) if w else "",
+        ", %d lines of the previous version" % len(prev_lines) if prev_lines is not None else ""))
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
+    ap.add_argument("--sha", required=True, help="the released commit")
+    ap.add_argument("--out", required=True, help="the snapshot directory to write")
+    ap.add_argument("--deployment", help="a deployment ID of that commit, instead of its newest deployment")
+    ap.add_argument("--window-start", help="open the window at this ISO 8601 time, or `now`, when that is later than "
+                    "the deployment's server_started line: a workflow_dispatch run passes its own start")
+    ap.add_argument("--min-minutes", type=float, default=10.0)
+    ap.add_argument("--min-events", type=int, default=1)
+    ap.add_argument("--cap-minutes", type=float, default=60.0)
+    ap.add_argument("--deploy-timeout-minutes", type=float, default=30.0)
+    a = ap.parse_args()
+    if not (0 <= a.min_minutes <= a.cap_minutes) or a.min_events < 1:
+        ap.error("need 0 <= --min-minutes <= --cap-minutes and --min-events >= 1")
+    if a.window_start:
+        a.window_start = now() if a.window_start == "now" else parse_time(a.window_start)
+        if a.window_start is None:
+            ap.error("--window-start must be an ISO 8601 time such as 2026-11-10T18:00:00Z, or now")
+    try:
+        return collect(a)
+    except Failed as e:
+        say("could not collect: %s" % e)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

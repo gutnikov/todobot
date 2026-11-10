@@ -52,7 +52,8 @@ line-length = 120
 target-version = "py312"
 src = ["src", "tests"]
 # The approved acceptance tests are the oracle: hash-checked, owned by the test writer, never reformatted here.
-extend-exclude = ["tests/acceptance"]
+# The loops' cases are small projects, many broken on purpose; each loop checks its own.
+extend-exclude = ["tests/acceptance", "agentify/loops/*/cases"]
 
 [tool.ruff.lint]
 select = [

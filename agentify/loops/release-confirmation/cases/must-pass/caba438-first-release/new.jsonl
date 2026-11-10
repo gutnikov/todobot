@@ -1,0 +1,22 @@
+{"time": "2026-11-10T17:52:57.279Z", "level": "info"}
+{"time": "2026-11-10T17:52:57.665Z", "level": "info", "event": "log", "logger": "alembic.runtime.migration", "version": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4"}
+{"time": "2026-11-10T17:52:57.665Z", "level": "info", "event": "log", "logger": "alembic.runtime.migration", "version": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4"}
+{"time": "2026-11-10T17:52:57.665Z", "level": "info", "event": "log", "logger": "alembic.runtime.migration", "version": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4"}
+{"time": "2026-11-10T17:52:57.665Z", "level": "info", "event": "log", "logger": "alembic.runtime.plugins", "version": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4"}
+{"time": "2026-11-10T17:52:57.665Z", "level": "info", "event": "log", "logger": "alembic.runtime.plugins", "version": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4"}
+{"time": "2026-11-10T17:52:57.665Z", "level": "info", "event": "log", "logger": "alembic.runtime.plugins", "version": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4"}
+{"time": "2026-11-10T17:52:57.665Z", "level": "info", "event": "log", "logger": "alembic.runtime.plugins", "version": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4"}
+{"time": "2026-11-10T17:52:57.665Z", "level": "info", "event": "log", "logger": "alembic.runtime.plugins", "version": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4"}
+{"time": "2026-11-10T17:52:57.665Z", "level": "info", "event": "log", "logger": "alembic.runtime.plugins", "version": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4"}
+{"time": "2026-11-10T17:52:57.665Z", "level": "info", "event": "log", "logger": "alembic.runtime.plugins", "version": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4"}
+{"time": "2026-11-10T17:52:57.665Z", "level": "info", "event": "migrate_started", "logger": "todobot", "version": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4"}
+{"time": "2026-11-10T17:52:57.754Z", "level": "info", "event": "migrate_finished", "logger": "todobot", "version": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4"}
+{"time": "2026-11-10T17:53:03.727Z", "level": "info"}
+{"time": "2026-11-10T17:53:06.649Z", "level": "info", "event": "server_started", "logger": "todobot.web", "version": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4"}
+{"time": "2026-11-10T17:53:06.675Z", "level": "info", "event": "http_request", "logger": "aiohttp.access", "version": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4"}
+{"time": "2026-11-10T18:02:29.299Z", "level": "info", "event": "http_request", "logger": "aiohttp.access", "version": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4"}
+{"time": "2026-11-10T18:02:29.299Z", "level": "info", "event": "start", "logger": "todobot.bot", "version": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4"}
+{"time": "2026-11-10T18:02:29.299Z", "level": "info", "event": "log", "logger": "aiogram.event", "version": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4"}
+{"time": "2026-11-10T18:03:39.542Z", "level": "info", "event": "http_request", "logger": "aiohttp.access", "version": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4"}
+{"time": "2026-11-10T18:03:39.542Z", "level": "info", "event": "inbox_saved", "logger": "todobot.bot", "version": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4"}
+{"time": "2026-11-10T18:03:39.542Z", "level": "info", "event": "log", "logger": "aiogram.event", "version": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4"}

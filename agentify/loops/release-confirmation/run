@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""run SNAPSHOT_DIR: judge a release's window that `collect` saved. Fast, deterministic, no network.
+
+One line per check or item, `<item>: <status>`, then ` — ` and what was seen and what to do. Lines starting with
+`#` only describe the window. Statuses of the checks: confirmed, deploy failed, migration missing, not the running
+version, signal missing (<n> of <min>), error <fingerprint> (<n>), inconclusive (too few events).
+
+Two more items compare the new version with the previous one and are informational: they never change the exit.
+`new errors`: confirmed or new error <fingerprint> (<n>); `rate`: confirmed or error rate <x>% vs <y>%.
+
+Exit 0: confirmed. 1: not confirmed. 3: inconclusive and nothing worse. 2: the snapshot cannot be read.
+Python 3.9+, no dependencies.
+"""
+import datetime
+import json
+import pathlib
+import sys
+
+ERROR_LEVELS = {"error", "err", "critical", "crit", "fatal", "alert", "emerg", "panic"}
+INFORMATIONAL = {"new errors", "rate"}  # the comparison with the previous version
+
+
+def read(snapshot):
+    meta = json.loads((snapshot / "meta.json").read_text(encoding="utf-8"))
+
+    def lines(name):
+        p = snapshot / name
+        if not p.exists():
+            return None
+        return [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
+    return meta, lines("new.jsonl") or [], lines("previous.jsonl")
+
+
+def minutes(a, b):
+    f = "%Y-%m-%dT%H:%M:%S.%fZ"
+    return (datetime.datetime.strptime(b, f) - datetime.datetime.strptime(a, f)).total_seconds() / 60
+
+
+def fingerprint(line):
+    if not line.get("event") and not line.get("logger"):
+        return "unstructured"
+    return "%s/%s/%s" % (line.get("logger") or "-", line.get("event") or "-", line.get("error") or "-")
+
+
+def is_error(line):
+    return line.get("level") in ERROR_LEVELS
+
+
+def is_update(line):
+    """One update the bot took in: aiogram's per-update line, or an update that did not validate."""
+    return (line.get("logger") == "aiogram.event" and line.get("level") == "info") or \
+        line.get("event") == "update_invalid"
+
+
+def pct(n, d):
+    return 100.0 * n / d if d else 0.0
+
+
+def judge(meta, new, prev):
+    """[(item, status, detail)] and the description lines."""
+    sha = meta["sha"]
+    v = sha[:7]
+    dep = meta.get("deployment") or {}
+    did = (dep.get("id") or "")[:8]
+    params = meta["params"]
+    out, about = [], []
+
+    # 1. the change is there
+    status, at_end = dep.get("status"), dep.get("status_at_end", "SUCCESS")
+    if status != "SUCCESS" or at_end in ("FAILED", "CRASHED"):
+        if not dep.get("id"):
+            seen = "no deployment of %s appeared in %s min: check that the push touched Railway's watch paths " \
+                   "and that the GitHub integration is connected" % (v, params["deploy_timeout_minutes"])
+        elif dep.get("timed_out"):
+            seen = "deployment %s of %s was still %s after %s min: see it in Railway" % (
+                did, v, status, params["deploy_timeout_minutes"])
+        elif status in ("REMOVED", "SKIPPED"):
+            seen = "deployment %s of %s was %s before it served, usually because a newer deployment replaced it: " \
+                   "confirm that one" % (did, v, status)
+        elif status == "CRASHED" or at_end == "CRASHED":
+            seen = "deployment %s of %s crashed: read `railway logs %s`, fix, push again" % (did, v, did)
+        else:
+            seen = "deployment %s of %s ended %s: read `railway logs --build %s` and the deployment's config " \
+                   "errors in Railway, fix, push again" % (did, v, status if status != "SUCCESS" else at_end, did)
+        out.append(("deploy", "deploy failed", seen))
+        return out, about
+    out.append(("deploy", "confirmed", "deployment %s, SUCCESS" % did))
+
+    w = meta["window"]
+    start, end = w["start"], w["end"]
+    in_window = [l for l in new if start <= l["time"] <= end]
+    updates = sum(1 for l in in_window if is_update(l))
+    prev_meta = meta.get("previous")
+    about.append("# %s, deployment %s: window %s to %s, %.1f min, ended: %s; %d updates; previous version %s" % (
+        v, did, start, end, minutes(start, end), w["ended"], updates,
+        prev_meta["sha"][:7] if prev_meta else "none"))
+
+    migrated = [l for l in new if l.get("event") == "migrate_finished" and l.get("version") == sha]
+    if migrated:
+        out.append(("migration", "confirmed", "migrate_finished with version %s at %s" % (v, migrated[0]["time"])))
+    else:
+        out.append(("migration", "migration missing", "no migrate_finished line with version %s in deployment %s: "
+                    "the pre-deploy migration did not run or did not finish; check the service's preDeployCommand "
+                    "(`python -m todobot migrate`) in Railway, then redeploy" % (v, did)))
+
+    probes = meta.get("healthz") or []
+    wrong = [p for p in probes if p.get("version") != sha]
+    if probes and not wrong:
+        out.append(("version", "confirmed", "/healthz answered %s %d of %d times" % (v, len(probes), len(probes))))
+    else:
+        answers = ", ".join("%s" % ((p.get("version") or "")[:7] or p.get("error") or p.get("status"))
+                            for p in probes) or "no answer recorded"
+        out.append(("version", "not the running version", "/healthz answered %s, not %s: production does not run "
+                    "this commit; see which deployment serves (`railway deployment list`)" % (answers, v)))
+
+    # 2. the change happened
+    sigs = meta.get("signals") or []
+    need = params["min_events"] * len(sigs)
+    for s in sigs:
+        n = sum(1 for l in in_window if l.get("event") == s["event"] and l.get("version") == sha)
+        item = "signal %s" % s["event"]
+        if n >= params["min_events"]:
+            out.append((item, "confirmed", "%d of %d in the window (%s)" % (n, params["min_events"], s["source"])))
+        elif updates < need:
+            out.append((item, "inconclusive (too few events)", "%d of %d, and the bot took in %d updates in %.0f "
+                        "min, fewer than the %d the signals need: start `gh workflow run release-confirmation.yml "
+                        "-f sha=%s`, then ask the owner to send the bot /start and one message; a dispatched run's "
+                        "window opens when the run starts" % (
+                            n, params["min_events"], updates, minutes(start, end), need, sha)))
+        else:
+            out.append((item, "signal missing (%d of %d)" % (n, params["min_events"]), "the bot took in %d updates "
+                        "but logged `%s` with version %s only %d times: the change did not happen on its path; "
+                        "check the code that logs it (%s)" % (updates, s["event"], v, n, s["source"])))
+
+    # 3. nothing broke: the strict rule, any ERROR or CRITICAL line of the new version in the window
+    if not new:
+        out.append(("errors", "inconclusive (too few events)", "no lines of deployment %s were collected" % did))
+        return out, about
+    # A line without a version is a raw line (stderr) of the new deployment's container: the new version's too.
+    mine = [l for l in in_window if l.get("version") in (sha, None)]
+    counts = {}
+    for l in mine:
+        if is_error(l):
+            counts[fingerprint(l)] = counts.get(fingerprint(l), 0) + 1
+    for fp, n in sorted(counts.items()):
+        out.append(("errors", "error %s (%d)" % (fp, n), "version %s logged it in the window; an error of the new "
+                    "version fails the release whether or not the previous one had it: read `railway logs %s "
+                    "--filter @level:error`" % (v, did)))
+    if not counts:
+        out.append(("errors", "confirmed", "no ERROR or CRITICAL line of %s in the window's %d lines" % (v, len(mine))))
+
+    # Informational: the comparison with the previous version, over every collected line of the new one.
+    errors = [l for l in new if is_error(l)]
+    prev_fps = {fingerprint(l) for l in (prev or []) if is_error(l)}
+    fresh = {}
+    for l in errors:
+        if fingerprint(l) not in prev_fps:
+            fresh[fingerprint(l)] = fresh.get(fingerprint(l), 0) + 1
+    for fp, n in sorted(fresh.items()):
+        out.append(("new errors", "new error %s (%d)" % (fp, n), "informational: the previous version did not log "
+                    "it in the baseline"))
+    if not fresh:
+        out.append(("new errors", "confirmed", "informational: %d error lines, none new against the previous version"
+                    % len(errors)))
+
+    rate = pct(len(errors), len(new))
+    cut = " (Railway cut the lines at its limit)" if dep.get("lines_cut") else ""
+    weak = prev is None or len(prev) < len(new) / 2
+    if weak:
+        limit = params["error_limit_pct"]
+        base = "weak baseline: %s, so the limit is %.1f%%" % (
+            "%d lines of the previous version against %d" % (len(prev), len(new)) if prev is not None
+            else "no previous version", limit)
+        if rate > limit:
+            out.append(("rate", "error rate %.1f%% vs %.1f%%" % (rate, limit), "informational: %d of %d lines are "
+                        "errors; %s%s" % (len(errors), len(new), base, cut)))
+        else:
+            out.append(("rate", "confirmed", "informational: %.1f%%; %s%s" % (rate, base, cut)))
+    else:
+        prev_rate = pct(sum(1 for l in prev if is_error(l)), len(prev))
+        if rate > prev_rate:
+            out.append(("rate", "error rate %.1f%% vs %.1f%%" % (rate, prev_rate), "informational: %d of %d lines "
+                        "are errors, a higher share than in the previous version's %d lines before the window%s" % (
+                            len(errors), len(new), len(prev), cut)))
+        else:
+            out.append(("rate", "confirmed", "informational: %.1f%% vs %.1f%% of the previous version%s" % (
+                rate, prev_rate, cut)))
+    return out, about
+
+
+def main():
+    if len(sys.argv) != 2:
+        print("usage: run SNAPSHOT_DIR", file=sys.stderr)
+        return 2
+    try:
+        meta, new, prev = read(pathlib.Path(sys.argv[1]))
+        results, about = judge(meta, new, prev)
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        print("snapshot: unreadable — %s: %s" % (type(e).__name__, e))
+        return 2
+    for line in about:
+        print(line)
+    for item, status, detail in results:
+        print("%s: %s — %s" % (item, status, detail))
+    statuses = [s for item, s, _ in results if item not in INFORMATIONAL]
+    if all(s == "confirmed" for s in statuses):
+        return 0
+    if all(s in ("confirmed", "inconclusive (too few events)") for s in statuses):
+        return 3
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

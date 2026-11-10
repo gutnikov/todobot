@@ -9,5 +9,18 @@
   },
   "enabledPlugins": {
     "agentify@agentify": true
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/agentify/loops/verify/stop-hook",
+            "timeout": 300
+          }
+        ]
+      }
+    ]
   }
 }
