@@ -1,0 +1,90 @@
+# The confirmation of a release (agentify/loops/release-confirmation/LOOP.md): wait for Railway to deploy the commit,
+# wait out the window, save a snapshot, judge it. The repository is public, and so are this job's log, summary and
+# artifact: collect keeps only time, level, event, version, logger and error type names of every log line.
+name: release-confirmation
+
+on:
+  push:
+    branches: [main]
+    # Railway's watch paths for the todobot service: a push that changes none of them deploys nothing.
+    paths:
+      - "src/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "railway.json"
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "The deployed commit to confirm (7 to 40 hex digits); the window opens when this run starts"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  release-confirmation:
+    name: release-confirmation
+    runs-on: ubuntu-latest
+    # Up to 30 min for the deployment, up to 60 for the window, and the rest for the steps around them.
+    timeout-minutes: 100
+    env:
+      SHA: ${{ inputs.sha || github.sha }}
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      LOOP: agentify/loops/release-confirmation
+    steps:
+      # A dispatched run opens a fresh window at its start (a re-run after a synthetic run, LOOP.md), so the start
+      # is taken before anything else.
+      - name: Note the run's start
+        shell: bash
+        run: echo "RUN_START=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # collect diffs the requirements between the previous version's commit and this one
+
+      - name: Install the railway CLI 5.71.0
+        shell: bash
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/railway.tgz" \
+            https://github.com/railwayapp/cli/releases/download/v5.71.0/railway-v5.71.0-x86_64-unknown-linux-musl.tar.gz
+          echo "2e682fd2ddf8d6fdf9e46d9d99d99646ff0022a6abb0c2bca93011348a269fb9  $RUNNER_TEMP/railway.tgz" | sha256sum -c -
+          sudo tar -xzf "$RUNNER_TEMP/railway.tgz" -C /usr/local/bin railway
+          railway --version
+
+      - name: collect
+        shell: bash
+        run: |
+          window=()
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then window=(--window-start "$RUN_START"); fi
+          "$LOOP/collect" --sha "$SHA" --out snapshot "${window[@]}"
+
+      - name: run
+        shell: bash
+        run: '"$LOOP/run" snapshot | tee result.txt'
+
+      - name: Job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### release-confirmation of ${SHA:0:7}"
+            echo
+            if [ -s result.txt ]; then
+              echo '```'
+              cat result.txt
+              echo '```'
+            else
+              echo "No verdict: collect could not save a snapshot. See the collect step's log."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: release-confirmation-${{ env.SHA }}
+          path: snapshot/
+          if-no-files-found: ignore
+          retention-days: 90

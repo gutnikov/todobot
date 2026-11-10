@@ -1,0 +1,27 @@
+{
+ "sha": "caba43826fa7fa8aba0ea44a7186bf96f55d4ca4",
+ "service": {
+  "project": "73eee4ea-4c54-447e-ae52-067986b9c098",
+  "environment": "e47d2aee-700f-487f-9212-b75779a765d3",
+  "service": "bcc229e9-dfe9-4806-a327-bc3cc64076f6"
+ },
+ "params": {
+  "min_minutes": 10.0,
+  "min_events": 1,
+  "cap_minutes": 60.0,
+  "deploy_timeout_minutes": 30.0,
+  "error_limit_pct": 1.0
+ },
+ "collected_at": "2026-11-10T19:36:57.268Z",
+ "deployment": {
+  "id": "b5eacc16-fd55-4e5c-bd01-31afd1287313",
+  "status": "FAILED",
+  "timed_out": false,
+  "created_at": "2026-11-10T17:49:28.717Z"
+ },
+ "previous": null,
+ "signals": [],
+ "healthz": [],
+ "window": null,
+ "baseline": null
+}

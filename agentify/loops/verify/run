@@ -1,0 +1,7 @@
+#!/bin/sh
+# verify: ruff check, ruff format --check, mypy, unit tests and the log-privacy rule on the project at $1;
+# with --full, all of tests/ (what CI runs). Output: `file:line: rule: what to do`.
+# Contract: $1 is the directory to check. Exit 0 = passes, non-zero = fires.
+# uv runs verify.py in this repository's environment, so the tools are the versions uv.lock pins.
+here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+exec uv run --quiet --locked --project "$here/../../.." python "$here/verify.py" "$@"

@@ -130,4 +130,11 @@ async def on_error(event: ErrorEvent, bot: Bot) -> None:
     try:
         await bot.send_message(chat_id=message.chat.id, text=texts.ERROR)
     except Exception as exc:  # the apology is best effort: the error is logged above either way
-        log_event(logger, "apology_failed", level=logging.ERROR, exc_info=exc, update_id=event.update.update_id)
+        log_event(
+            logger,
+            "apology_failed",
+            level=logging.ERROR,
+            update_id=event.update.update_id,
+            error=type(exc).__name__,
+            exc=redact(format_exception(exc), _content(message)),
+        )

@@ -1,0 +1,24 @@
+{"time": "2026-11-10T17:44:00.000Z", "level": "info", "event": "http_request", "logger": "aiohttp.access", "version": "3d27709bb042abb454929c4862f59aed7628ede1"}
+{"time": "2026-11-10T17:44:00.001Z", "version": "3d27709bb042abb454929c4862f59aed7628ede1", "level": "info", "event": "inbox_saved", "logger": "todobot.bot"}
+{"time": "2026-11-10T17:44:00.002Z", "level": "info", "event": "log", "logger": "aiogram.event", "version": "3d27709bb042abb454929c4862f59aed7628ede1"}
+{"time": "2026-11-10T17:45:00.000Z", "level": "info", "event": "http_request", "logger": "aiohttp.access", "version": "3d27709bb042abb454929c4862f59aed7628ede1"}
+{"time": "2026-11-10T17:45:00.001Z", "version": "3d27709bb042abb454929c4862f59aed7628ede1", "level": "info", "event": "inbox_saved", "logger": "todobot.bot"}
+{"time": "2026-11-10T17:45:00.002Z", "level": "info", "event": "log", "logger": "aiogram.event", "version": "3d27709bb042abb454929c4862f59aed7628ede1"}
+{"time": "2026-11-10T17:46:00.000Z", "level": "info", "event": "http_request", "logger": "aiohttp.access", "version": "3d27709bb042abb454929c4862f59aed7628ede1"}
+{"time": "2026-11-10T17:46:00.001Z", "version": "3d27709bb042abb454929c4862f59aed7628ede1", "level": "error", "event": "handler_error", "logger": "todobot.bot", "error": "ProgrammingError"}
+{"time": "2026-11-10T17:46:00.002Z", "level": "info", "event": "log", "logger": "aiogram.event", "version": "3d27709bb042abb454929c4862f59aed7628ede1"}
+{"time": "2026-11-10T17:47:00.000Z", "level": "info", "event": "http_request", "logger": "aiohttp.access", "version": "3d27709bb042abb454929c4862f59aed7628ede1"}
+{"time": "2026-11-10T17:47:00.001Z", "version": "3d27709bb042abb454929c4862f59aed7628ede1", "level": "info", "event": "inbox_saved", "logger": "todobot.bot"}
+{"time": "2026-11-10T17:47:00.002Z", "level": "info", "event": "log", "logger": "aiogram.event", "version": "3d27709bb042abb454929c4862f59aed7628ede1"}
+{"time": "2026-11-10T17:48:00.000Z", "level": "info", "event": "http_request", "logger": "aiohttp.access", "version": "3d27709bb042abb454929c4862f59aed7628ede1"}
+{"time": "2026-11-10T17:48:00.001Z", "version": "3d27709bb042abb454929c4862f59aed7628ede1", "level": "info", "event": "inbox_saved", "logger": "todobot.bot"}
+{"time": "2026-11-10T17:48:00.002Z", "level": "info", "event": "log", "logger": "aiogram.event", "version": "3d27709bb042abb454929c4862f59aed7628ede1"}
+{"time": "2026-11-10T17:49:00.000Z", "level": "info", "event": "http_request", "logger": "aiohttp.access", "version": "3d27709bb042abb454929c4862f59aed7628ede1"}
+{"time": "2026-11-10T17:49:00.001Z", "version": "3d27709bb042abb454929c4862f59aed7628ede1", "level": "info", "event": "inbox_saved", "logger": "todobot.bot"}
+{"time": "2026-11-10T17:49:00.002Z", "level": "info", "event": "log", "logger": "aiogram.event", "version": "3d27709bb042abb454929c4862f59aed7628ede1"}
+{"time": "2026-11-10T17:50:00.000Z", "level": "info", "event": "http_request", "logger": "aiohttp.access", "version": "3d27709bb042abb454929c4862f59aed7628ede1"}
+{"time": "2026-11-10T17:50:00.001Z", "version": "3d27709bb042abb454929c4862f59aed7628ede1", "level": "error", "event": "handler_error", "logger": "todobot.bot", "error": "ProgrammingError"}
+{"time": "2026-11-10T17:50:00.002Z", "level": "info", "event": "log", "logger": "aiogram.event", "version": "3d27709bb042abb454929c4862f59aed7628ede1"}
+{"time": "2026-11-10T17:51:00.000Z", "level": "info", "event": "http_request", "logger": "aiohttp.access", "version": "3d27709bb042abb454929c4862f59aed7628ede1"}
+{"time": "2026-11-10T17:51:00.001Z", "version": "3d27709bb042abb454929c4862f59aed7628ede1", "level": "info", "event": "inbox_saved", "logger": "todobot.bot"}
+{"time": "2026-11-10T17:51:00.002Z", "level": "info", "event": "log", "logger": "aiogram.event", "version": "3d27709bb042abb454929c4862f59aed7628ede1"}

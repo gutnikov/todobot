@@ -1,0 +1,7 @@
+#!/bin/sh
+# acceptance-gate: one line per approved criterion, `<ID>-<n>: green | red | no test | changed without approval |
+# no red record`, and `<path>: not approved` for an acceptance file no approved requirement lists. See gate.py.
+# Contract: $1 is the directory to check (`--base REF`: also check that changes since REF were approved).
+# Exit 0 = passes, non-zero = fires. uv runs gate.py in this repository's environment, with its pytest.
+here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+exec uv run --quiet --locked --project "$here/../../.." python "$here/gate.py" "$@"

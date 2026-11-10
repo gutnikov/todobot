@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Claude Code Stop hook: the agent does not end its turn while fast verify fails.
+
+Wired in .claude/settings.json (hooks.Stop). Reads the hook's JSON on stdin. Does nothing (exit 0) while the working
+tree has no changes in src/, tests/, pyproject.toml or uv.lock. Otherwise runs `run <project>` (fast mode) and, when
+it fires, exits 2 with the findings on stderr: Claude Code then keeps the turn going and shows them to the agent.
+
+It does not stop on `stop_hook_active`: the agent keeps fixing until verify passes. Claude Code ends the turn anyway
+after 8 blocks in a row without a tool call in between.
+"""
+
+import contextlib
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+PROJECT = HERE.parents[2]
+WATCHED = ["src", "tests", "pyproject.toml", "uv.lock"]
+
+
+def main() -> int:
+    with contextlib.suppress(ValueError):
+        json.load(sys.stdin)  # the Stop input; what verify checks does not depend on it
+    # git and this loop's own run: fixed commands, no input from the hook.
+    status = subprocess.run(  # noqa: S603
+        ["git", "status", "--porcelain", "--untracked-files=all", "--", *WATCHED],  # noqa: S607
+        cwd=PROJECT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if status.returncode == 0 and not status.stdout.strip():
+        return 0  # nothing verify checks has changed
+    done = subprocess.run([str(HERE / "run"), str(PROJECT)], capture_output=True, text=True, check=False)  # noqa: S603
+    if done.returncode == 0:
+        return 0
+    sys.stderr.write(done.stdout + done.stderr)
+    sys.stderr.write(
+        "\nThe turn cannot end while verify fails (agentify/loops/verify). Fix each problem above in the code, "
+        "then run `agentify/loops/verify/run .` until it prints `verify: ok`.\n"
+    )
+    # Plain text on stdout: Claude Code then always takes exit 2 as a block, even when a finding names a missing file.
+    sys.stdout.write("verify failed\n")
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
