@@ -34,8 +34,10 @@ def build_router() -> Router:
     router = Router(name="skeleton")
     # The bot is for private chats; anything else is left unhandled.
     router.message.filter(F.chat.type == ChatType.PRIVATE)
+    # /start is a text message. CommandStart alone also matches a caption, which would swallow a photo or a voice
+    # note captioned "/start"; those are stored like any other (SK-2).
     # ignore_mention: in a private chat "/start@name" can only be for us, and checking the name would cost a getMe.
-    router.message.register(on_start, CommandStart(ignore_mention=True))
+    router.message.register(on_start, F.text, CommandStart(ignore_mention=True))
     router.message.register(on_message)
     router.errors.register(on_error)
     return router
