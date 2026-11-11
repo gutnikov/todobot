@@ -1,0 +1,11 @@
+key: EF
+source: "text from the user"
+title: "a requirement still being written"
+fetched: 2026-11-10
+status: draft
+approved_by: ""
+approved_at: ""
+requirements:
+  - id: EF#1
+    kind: functional
+    text: "The gate ignores a requirement that is not approved: EF#1 has no example and no test, and that is fine."

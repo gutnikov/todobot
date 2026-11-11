@@ -7,9 +7,11 @@
 1. Waits until Railway has a deployment of the service for SHA (the newest one; --deployment picks another) and it
    reaches a final status, up to --deploy-timeout-minutes.
 2. Finds the previous version: the newest earlier deployment of another commit that ran (it has log lines).
-3. Works out the signals: the `prod:` events (`event` = `name`) of the requirement files under
-   agentify/specs/requirements/ changed between the previous version's commit and SHA (all of them for the first
-   release). No requirement changed: no signal.
+3. Works out the signals of what changed between the previous version's commit and SHA (everything, for the first
+   release): `specs.py signals --base <previous>` for the spec part's requirement files (agentify/specs/requirements/
+   <KEY>.yaml: the approved requirements whose spec changed), and the `prod:` events (`event` = `name`) of the
+   markdown requirement files that changed (skeleton.md). No requirement changed: no signal. A signal's `min` above
+   --min-events raises it, for every signal.
 4. Waits out the window: from the new version's `server_started` line, or from --window-start when that is later
    (a workflow_dispatch run passes its own start, so a synthetic run sent after it counts), at least --min-minutes
    and at least --min-events lines of each signal, up to --cap-minutes. /healthz is asked at the start and the end.
@@ -22,15 +24,20 @@ event, version, logger and an error's type name; everything else (user ids, mess
 tracebacks) is dropped here, before anything is written.
 
 Runs with the railway CLI's login (the owner's on the agent's machine, RAILWAY_TOKEN in CI). Exit 0 when the snapshot
-is saved, whatever it shows; 2 when it could not be collected. Python 3.9+, no dependencies.
+is saved, whatever it shows; 2 when it could not be collected. Python 3.9+, no dependencies; a release that changes
+agentify/specs/ also needs agentify 0.4.0's specs.py (AGENTIFY_ROOT, else Claude Code's plugin cache) and PyYAML in
+this Python.
 """
 import argparse
 import datetime
 import json
+import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -39,7 +46,11 @@ PROJECT = "73eee4ea-4c54-447e-ae52-067986b9c098"
 ENVIRONMENT = "e47d2aee-700f-487f-9212-b75779a765d3"  # production
 SERVICE = "bcc229e9-dfe9-4806-a327-bc3cc64076f6"  # todobot
 HEALTHZ = "https://todobot-production-dbb2ecd7.up.railway.app/healthz"
+SPECS = "agentify/specs"
+LAYERS = "agentify/specs/layers.yaml"
 REQUIREMENTS = "agentify/specs/requirements"
+AGENTIFY_VERSION = "0.4.0"  # the agentify whose specs.py the signals are validated with (commit eaff327)
+AGENTIFY_CACHE = pathlib.Path.home() / ".claude" / "plugins" / "cache" / "agentify" / "agentify" / AGENTIFY_VERSION
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 FINAL = {"SUCCESS", "FAILED", "CRASHED", "REMOVED", "SKIPPED"}
@@ -228,8 +239,57 @@ def full_sha(sha):
         raise Failed("commit %s is not in this repository (in CI, check out with fetch-depth: 0)" % sha)
 
 
+def agentify_specs():
+    """specs.py of the agentify version this loop is validated with: AGENTIFY_ROOT, else Claude Code's plugin cache."""
+    root = pathlib.Path(os.environ.get("AGENTIFY_ROOT") or AGENTIFY_CACHE).expanduser().resolve()
+    script = root / "parts" / "spec" / "scripts" / "specs.py"
+    manifest = root / ".claude-plugin" / "plugin.json"
+    version = json.loads(manifest.read_text(encoding="utf-8")).get("version") if manifest.is_file() else None
+    if not script.is_file() or version != AGENTIFY_VERSION:
+        raise Failed("the release changes the spec, and its signals need agentify %s's specs.py, not found in %s "
+                     "(found: %s): set AGENTIFY_ROOT to agentify %s" % (AGENTIFY_VERSION, root, version or "nothing",
+                                                                       AGENTIFY_VERSION))
+    return script
+
+
+def spec_signals(base, sha):
+    """[{event, source, req, min}] from `specs.py signals --base <base>`, run in a worktree of sha: the `prod` signals
+    of the approved requirements whose spec changed from base to sha."""
+    script = agentify_specs()
+    top = git("rev-parse", "--show-toplevel").strip()
+    tmp = tempfile.mkdtemp(prefix="rc-spec-")
+    tree = pathlib.Path(tmp) / "tree"
+    try:
+        git("worktree", "add", "--quiet", "--detach", str(tree), sha)
+        p = subprocess.run([sys.executable, str(script), "signals", "--root", str(tree), "--base", base],
+                           capture_output=True, text=True, cwd=top)
+    finally:
+        subprocess.run(["git", "-C", top, "worktree", "remove", "--force", str(tree)], capture_output=True)
+        shutil.rmtree(tmp, ignore_errors=True)
+    for note in p.stderr.splitlines():
+        if note.startswith("note: "):
+            say("specs.py signals: %s" % note[6:])
+    if p.returncode != 0:
+        err = [l for l in p.stderr.splitlines() if l.strip()]
+        raise Failed("specs.py signals --base %s failed (exit %d): %s" % (base[:7], p.returncode,
+                                                                          (err[-1] if err else "")[:200]))
+    found = []
+    for s in json.loads(p.stdout or "[]"):
+        event = (s.get("match") or {}).get("event")
+        if not isinstance(event, str) or not NAME.match(event):
+            raise Failed("signal %r has no `event` in its match: this loop finds a signal by its log event" % s)
+        key = str(s.get("req") or "").split("#")[0]
+        found.append({"event": event, "source": "%s/%s.yaml (%s)" % (REQUIREMENTS, key, s.get("req")),
+                      "req": s.get("req"), "min": int(s.get("min") or 1)})
+    return found
+
+
 def signals(previous_sha, sha):
-    """[{event, source}] from the `prod:` lines of the requirement files changed from previous_sha to sha."""
+    """[{event, source, ...}]: the production signals of the requirements that changed from previous_sha to sha.
+
+    Requirement files in the spec part's format (agentify/specs/requirements/<KEY>.yaml): `specs.py signals --base
+    <previous sha>`, when anything under agentify/specs/ changed and the spec is set up at sha. Markdown requirement
+    files (skeleton.md): the `prod:` lines (`event` = `name`) of each one that changed. One signal per event."""
     base = previous_sha or EMPTY_TREE
     if previous_sha:
         try:
@@ -237,17 +297,23 @@ def signals(previous_sha, sha):
         except Failed:
             raise Failed("the previous version's commit %s is not in this repository (in CI, check out with "
                          "fetch-depth: 0)" % previous_sha[:7])
+    found = []
+    spec_changed = git("diff", "--name-only", base, sha, "--", SPECS).strip()
+    set_up = git("ls-tree", "--name-only", sha, "--", LAYERS).strip()
+    if spec_changed and set_up:
+        found += spec_signals(base, sha)
     changed = [p for p in git("diff", "--name-only", "--diff-filter=d", base, sha, "--", REQUIREMENTS).splitlines()
                if p.endswith(".md")]
-    found, seen = [], set()
     for path in changed:
         for line in git("show", "%s:%s" % (sha, path)).splitlines():
             if PROD.match(line):
-                for event in SIGNAL.findall(line):
-                    if event not in seen:
-                        seen.add(event)
-                        found.append({"event": event, "source": path})
-    return found
+                found += [{"event": event, "source": path} for event in SIGNAL.findall(line)]
+    seen, unique = set(), []
+    for s in found:
+        if s["event"] not in seen:
+            seen.add(s["event"])
+            unique.append(s)
+    return unique
 
 
 # ---------------------------------------------------------------- the window
@@ -321,6 +387,10 @@ def collect(a):
     # 3. the signals
     sigs = signals(previous["_sha"] if previous else None, sha)
     meta["signals"] = sigs
+    least = max([a.min_events] + [s.get("min", 1) for s in sigs])
+    if least > a.min_events:  # run judges every signal by params.min_events
+        say("min events: %d, the highest `min` of the signals" % least)
+        a.min_events = params["min_events"] = least
     say("signals: %s" % (", ".join("%s (%s)" % (s["event"], s["source"]) for s in sigs) or
                          "none: no requirement changed, checks 1 and 3 only"))
 

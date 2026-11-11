@@ -1,0 +1,7 @@
+layers:
+  - id: model
+    type: event-model
+    path: agentify/specs/model/
+    status: validated
+    why: "spine"
+    check: "python3 <agentify>/parts/event-model/scripts/em.py check --strict agentify/specs/model/"

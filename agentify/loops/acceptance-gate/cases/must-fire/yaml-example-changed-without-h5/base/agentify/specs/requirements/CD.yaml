@@ -1,0 +1,19 @@
+key: CD
+source: "text from the user"
+title: "the gate's own example of the YAML format"
+fetched: 2026-11-10
+status: approved
+approved_by: "the user"
+approved_at: "2026-11-10"
+requirements:
+  - id: CD#1
+    kind: functional
+    text: "Two and two make four."
+  - id: CD#2
+    kind: functional
+    text: "Subtraction: four minus two is two, two minus two is zero."
+acceptance_tests:
+  red_before_work: "`uv run pytest tests/acceptance` → `3 failed`, 2026-11-10"
+  sha256:
+    tests/acceptance/test_cd1_adds.py: 2a6d94498608b896531ba63cf9cdddcd22c6bad7640e556d1fc9c1134c74ad7f
+    tests/acceptance/test_s02_subtracts.py: 0913e4d720b9b7d5fd2fda18a13b9bb125bbf94f7edef1cd2248f19b61652f8f

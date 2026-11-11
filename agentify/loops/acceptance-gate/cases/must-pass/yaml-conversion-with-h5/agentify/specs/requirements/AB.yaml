@@ -1,0 +1,20 @@
+key: AB
+source: "agentify/specs/requirements/ab.md, approved; converted"
+title: "AB in the spec part's format"
+fetched: 2026-11-10
+status: approved
+approved_by: "the user"
+approved_at: "2026-11-10"
+supersedes: agentify/specs/requirements/ab.md
+requirements:
+  - id: AB#1
+    kind: functional
+    text: "Two and two make four."
+  - id: AB#3
+    kind: functional
+    text: "Four minus two is two."
+acceptance_tests:
+  red_before_work: "`uv run pytest tests/acceptance` → `2 failed`, 2026-11-10"
+  sha256:
+    tests/acceptance/test_ab1_adds.py: bca7a8f5e3d70f7889d34adffb3de440fc8e313559696e589470f03f8adf8d30
+    tests/acceptance/test_ab3_subtracts.py: 0cd37f313163004d050a29a5a5b7159ae11fcebb0c0a447a5711400bb1fb3379

@@ -57,9 +57,19 @@ the snapshot, so it is fast and deterministic, and recorded windows are its case
    `--deploy-timeout-minutes` (10; a build takes 1–2 min). Railway creates no GitHub deployments, so collect polls Railway.
 2. Finds the previous version: the newest earlier deployment of another commit that has log lines. For caba438 there
    is none, since all four deployments are of caba438.
-3. Works out the signals. It reads the `prod:` lines (`` `event` = `start` ``) of the files under
-   `agentify/specs/requirements/` changed between the previous version's commit and this one. On the first release
-   that is every requirement file. If no requirement changed, there is no signal.
+3. Works out the signals of what changed between the previous version's commit and this one (on the first
+   release, everything):
+   - when anything under `agentify/specs/` changed and the spec is set up at this commit (`layers.yaml`):
+     `specs.py signals --base <previous sha>`, run in a temporary `git worktree` of this commit. It gives the `prod`
+     signals of the approved requirements whose spec elements or text changed (`agentify/specs/requirements/
+     <KEY>.yaml`); a file that is not approved gives none, and `collect` prints why. Each signal's `match.event` is
+     the event `run` looks for; its `source` names the file and the requirement (`SK.yaml (SK#1)`);
+   - the markdown requirement files that changed (skeleton.md): their `prod:` lines (`` `event` = `start` ``), as
+     before.
+   One signal per event. If no requirement changed, there is no signal. A signal's `min` above `--min-events`
+   raises `min_events` for every signal, since `run` judges them all by one number. If the spec changed and
+   agentify 0.4.0's `specs.py` cannot be found (`AGENTIFY_ROOT`, else Claude Code's plugin cache), `collect` exits
+   2: the release's signals are unknown, and it does not guess them.
 4. Waits out the window. On a push, it starts at the new version's `server_started` line, so the build does not
    count. On a `workflow_dispatch`, it starts when the run started (`--window-start`, the job's first step), or at
    `server_started` if that is later. A re-run therefore opens a fresh window, and a synthetic run sent after it
@@ -128,7 +138,10 @@ commit deployed another way (a redeploy in Railway, a variable change), it start
   improved".
 - **No latency.** The app logs no durations (aiogram's per-update duration is in its message, which is dropped).
 - **A signal is its event name only.** The `kind` of `inbox_saved` (SK-2) is not checked, and the version must
-  match.
+  match. A `match` with more fields than `event` is judged by its event; one without an event fails `collect`.
+- **One `min` for all signals.** The highest `min` of the release's signals applies to each of them.
+- **Approving a requirement shows nothing.** `specs.py signals` picks the requirements whose spec elements or text
+  changed: a release that only approves SK.yaml, with the same text and examples, has no signal from it.
 - **Check 3 sees the window only.** The strict rule reads the window's lines. An ERROR between the deployment's
   creation and its `server_started` (the pre-deploy and the startup) appears only in the informational `new errors`
   line, unless it fails the deploy or the migration. The informational rate is error lines per log line, not per
@@ -148,7 +161,8 @@ commit deployed another way (a redeploy in Railway, a variable change), it start
 | Tool | Version | How |
 |---|---|---|
 | railway CLI | 5.71.0 | Locally, the owner's login (`railway login`). In CI, the release tarball `railway-v5.71.0-x86_64-unknown-linux-musl.tar.gz`, its sha256 pinned in the workflow, with `RAILWAY_TOKEN`. Used: `railway deployment list -p -e -s --json --limit 50` and `railway logs <deployment> -p -e -s --deployment --json --since --until --lines 5000`. The project, environment and service IDs are constants in `collect`, so no `railway link` is needed. |
-| Python | 3.9.6 (macOS `/usr/bin/python3`), the runner's `python3` in CI | `collect` and `run` use the standard library only |
+| Python | 3.9.6 (macOS `/usr/bin/python3`, with PyYAML 6.0.3); in CI 3.12 through uv 0.10.11 (`astral-sh/setup-uv`) | `run` and `collect` use the standard library only; `specs.py`, which `collect` starts with its own Python, needs PyYAML: in CI `uv run --no-project --python 3.12 --with pyyaml==6.0.3 python collect` |
+| agentify `specs.py` | 0.4.0, commit eaff327 | `signals --base`, for a release that changes `agentify/specs/`. Locally Claude Code's plugin cache (`~/.claude/plugins/cache/agentify/agentify/0.4.0`) or `AGENTIFY_ROOT`; in CI a checkout of github.com/gutnikov/agentify (public) at eaff327 |
 | git | 2.50.1 | `rev-parse`, `diff`, `show` for the signals; CI checks out with `fetch-depth: 0` |
 | HTTP | /healthz | `https://todobot-production-dbb2ecd7.up.railway.app/healthz`, urllib, 15 s timeout |
 | GitHub Actions | `actions/checkout@v7`, `actions/upload-artifact@v7`, `ubuntu-latest` | the wiring |
@@ -199,6 +213,7 @@ about 0.05 s against a budget of 5 s.
 | Case | Made from | Fires with |
 |---|---|---|
 | `must-pass/caba438-first-release` | the real window of deployment fc7d52ae, collected from production | nothing: all confirmed |
+| `must-pass/caba438-signals-from-spec` | the same window, with the signals as `collect` takes them from `specs.py signals` once SK.yaml is approved (`event`, `source`, `req`, `min`) | nothing: all confirmed, sources `SK.yaml (SK#1)` and `SK.yaml (SK#2)` |
 | `must-fire/deploy-failed` | the real deployment b5eacc16 (`collect --deployment b5eacc16…`): FAILED, no lines | `deploy failed` |
 | `must-fire/too-few-events-at-cap` | the real window of fc7d52ae collected with `--min-events 2`: 1 of each signal and 2 updates at the 60-min cap | `inconclusive (too few events)` ×2, exit 3 |
 | `must-fire/migration-missing` | the must-pass window without the pre-deploy container's lines, as d4e7bd51 ran | `migration missing` |
@@ -225,6 +240,14 @@ Also checked on 2026-11-10, outside the cases:
   fresh window. It polled to the cap with no synthetic run and ended `inconclusive (too few events)`, exit 3.
 - **A push run still gives the same snapshot.** After `--window-start` was added, `collect --sha caba438`, with or
   without a `--window-start` earlier than `server_started`, wrote a `new.jsonl` byte-identical to the must-pass case.
+- **The signals from the spec** (2026-11-11), `signals(previous, sha)` of `collect` on the commits of a scratch
+  clone: the first release before the spec (none, 9d74f7c) gives `start` and `inbox_saved` from skeleton.md, as
+  before; the commit that sets the spec up with SK.yaml not approved gives none (four notes: "its file is questions,
+  not approved"); approving SK.yaml with nothing else changed gives none; the first release with SK.yaml approved
+  gives `start` (SK#1) and `inbox_saved` (SK#2) from SK.yaml, and notes that SK#4 and SK#5 show nothing in
+  production; a changed example of SK#2 gives `inbox_saved` only. With `AGENTIFY_ROOT=/nowhere`, a release that
+  changes the spec fails to collect with the reason, and one that does not still gets skeleton.md's signals. The
+  temporary worktrees are removed after each call.
 - **The sanitizer** on lines with `user_id`, a request line with headers and an address, a DB error whose traceback
   quotes a row, a config error's text, and a non-name event and logger. Only the allowed fields came out.
 
@@ -238,9 +261,12 @@ job; `run` never touches production.
 - **Triggers:** a push to `main` whose changes touch Railway's watch paths for the service (`src/**`,
   `pyproject.toml`, `uv.lock`, `Dockerfile`, `.dockerignore` (since 2026-11-10 set in `.railway/railway.ts`); checked against the service's
   `watchPatterns`), and `workflow_dispatch` with a `sha` input.
-- **Steps:** note the run's start (`RUN_START`, the first step), checkout with full history, install the pinned
-  railway CLI, run `collect` then `run` with `RAILWAY_TOKEN` from secrets, write the result lines to the job summary,
-  and upload the snapshot as the artifact `release-confirmation-<sha>` (90 days).
+- **Steps:** note the run's start (`RUN_START`, the first step), checkout with full history, check out agentify
+  0.4.0 (eaff327) into `.agentify-plugin` (`continue-on-error`: if it fails, only a release that changes
+  `agentify/specs/` fails to collect), set up uv 0.10.11 with Python 3.12, install the pinned
+  railway CLI, run `collect` (through uv, with PyYAML 6.0.3 and `AGENTIFY_ROOT=.agentify-plugin`) then `run` with
+  `RAILWAY_TOKEN` from secrets, write the result lines to the job summary, and upload the snapshot as the artifact
+  `release-confirmation-<sha>` (90 days). The two steps added on 2026-11-11 are pinned to commit SHAs.
 - **A dispatched run** passes `--window-start "$RUN_START"` to `collect`, so its window opens at the run's start, not
   at the deploy. That is how an inconclusive release is judged again after a synthetic run. A push run passes
   nothing, and its window opens at the deployment's `server_started`.

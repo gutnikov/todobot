@@ -1,0 +1,8 @@
+#!/bin/sh
+# spec-check: specs.py check and every layer's check from agentify/specs/layers.yaml, on the project at $1.
+# Output: `[<layer>] <command>: passes | fires`, what a check that fires printed, and a summary. See spec_check.py.
+# Contract: $1 is the directory to check. Exit 0 = passes, 1 = fires, 2 = cannot run.
+# uv runs it with Python 3.12 and PyYAML 6.0.3 beside the project, not in it: the project's dependencies stay as
+# they are. agentify's scripts: AGENTIFY_ROOT, else ~/.claude/plugins/cache/agentify/agentify/0.4.0.
+here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+exec uv run --quiet --no-project --python 3.12 --with pyyaml==6.0.3 python "$here/spec_check.py" "$@"

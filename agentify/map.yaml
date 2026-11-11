@@ -8,8 +8,9 @@
 #
 # Found 2026-11-10, after the skeleton (PR #1): a Python 3.12 service in github.com/gutnikov/todobot (public, main),
 # deployed to Railway (project todobot, service todobot, region ams) with Postgres on Neon (project todobot,
-# aws-eu-central-1). Since PR #2: GitHub Actions (verify, acceptance-gate required on main; release-confirmation after
-# each deploy) and a Stop hook (verify, fast).
+# aws-eu-central-1). Since PR #2: GitHub Actions (verify, acceptance-gate required on main, spec-check too since task:specs-setup; release-confirmation after
+# each deploy) and a Stop hook (verify, fast). Since 2026-11-11 (branch specs/setup): the spec in agentify/specs/
+# (event model, glossary, decision tables, lifecycles) and the CI job spec-check.
 
 version: 1
 
@@ -34,7 +35,7 @@ not_here:
   discovery: "the user brings each idea and it gets built; no prototypes or decision records"
 
 # Where a change ends now: the last stage it reaches, and what confirms it there.
-ends_at: "production on Railway: a push to main that touches the app (watch paths src/, pyproject.toml, uv.lock, Dockerfile, .dockerignore) deploys at once (only PRs with green verify and acceptance-gate reach main); release-confirmation judges every such deploy; the service's settings are .railway/railway.ts, applied by the railway-config workflow"
+ends_at: "production on Railway: a push to main that touches the app (watch paths src/, pyproject.toml, uv.lock, Dockerfile, .dockerignore) deploys at once (only PRs with green verify, acceptance-gate and spec-check reach main); release-confirmation judges every such deploy; the service's settings are .railway/railway.ts, applied by the railway-config workflow"
 
 # Where the project's own systems record the exits of its super-loops. None yet.
 trace:
@@ -51,9 +52,12 @@ pains:
 
 # The spec part's facts, filled when specs are set up (agentify's parts/spec/profile.md).
 spec:
-  docs: []
-  running_app: ""
-  readers: []
-  e2e: ""
-  seeding: ""
-  risks: []
+  docs:
+    - "text in the Claude Code session"
+    - "GitHub issues of gutnikov/todobot (read with gh, never written)"
+    - "the running bot, @sortmyshit_bot, for what already exists"
+  running_app: "@sortmyshit_bot in Telegram; https://todobot-production-dbb2ecd7.up.railway.app/healthz"
+  readers: [the user, agents]
+  e2e: "none: black-box pytest in tests/acceptance, Updates posted to /telegram/webhook, replies read from a fake Bot API"
+  seeding: "a fresh Postgres database per test (pgserver or TEST_DATABASE_URL), python -m todobot migrate"
+  risks: [integrations, timers, permissions, rules-and-statuses]

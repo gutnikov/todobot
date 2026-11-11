@@ -1,0 +1,32 @@
+# AB as an event model: each example traces to a requirement of AB.yaml.
+system: ab
+actors: [User]
+slices:
+  - id: S01
+    name: Add
+    type: command
+    actor: User
+    screen: Calculator
+    reqs: [AB#1]
+    command: {name: Add, fields: {a: input, b: input}}
+    errors: []
+    events: {Added: {stream: Sum, fields: {a: cmd, b: cmd}}}
+    specs:
+      - name: two and two make four
+        given: calculator
+        when: {a: 2, b: 2}
+        then: {see: [{screen: Calculator, field: Result.value, is: 4}]}
+  - id: S02
+    name: Subtract
+    type: command
+    actor: User
+    screen: Calculator
+    reqs: [AB#3]
+    command: {name: Subtract, fields: {a: input, b: input}}
+    errors: []
+    events: {Subtracted: {stream: Sum, fields: {a: cmd, b: cmd}}}
+    specs:
+      - name: four minus two is two
+        given: calculator
+        when: {a: 4, b: 2}
+        then: {see: [{screen: Calculator, field: Result.value, is: 2}]}

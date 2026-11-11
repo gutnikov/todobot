@@ -1,0 +1,180 @@
+# The todobot skeleton (SK), converted from agentify/specs/requirements/skeleton.md into the spec part's format.
+#
+# skeleton.md was approved by the user on 2026-11-10 (hitl-log: H5, task:skeleton). This conversion is NOT approved
+# yet: it awaits the owner's approval (H5) and the answers to its open questions. Until then skeleton.md stays the
+# approved oracle, and the acceptance gate reads it. Once this file is approved, it supersedes skeleton.md, which stays
+# as the historical record; the approved tests below are the same files with the same sha256.
+#
+# The ids map one to one: SK-1 -> SK#1, SK-2 -> SK#2, SK-4 -> SK#4, SK-5 -> SK#5. SK-3 was dropped (SK?1), and SK#3
+# is not reused. Every requirement's text is its criterion in skeleton.md, word for word; the bot's texts are exact.
+
+key: SK
+source: "agentify/specs/requirements/skeleton.md: the skeleton's criteria, approved by the user on 2026-11-10 (hitl-log: H5, task:skeleton)"
+title: "the todobot skeleton"
+fetched: 2026-11-11
+status: questions
+approved_by: ""
+approved_at: ""
+supersedes: agentify/specs/requirements/skeleton.md
+
+requirements:
+  - id: SK#1
+    from: "skeleton.md, SK-1 /start"
+    kind: functional
+    text: |
+      Any Telegram user sends `/start` in a private chat. Within 5 seconds the bot sends to that chat exactly:
+
+      > Привет! Присылай задачи текстом, голосом или картинкой — я их сохраню.
+    prod:
+      signal: "a /start was answered: a log line with `event` = `start` and the release's `version`"
+      match: {event: start}
+      min: 1
+
+  - id: SK#2
+    from: "skeleton.md, SK-2 Taking in a message"
+    kind: functional
+    text: |
+      Any Telegram user sends a private-chat message other than `/start` (other commands included). Its `kind`:
+
+      | The message has | `kind` | `text` | `file_id` |
+      |---|---|---|---|
+      | `text` | `text` | the text | NULL |
+      | `voice` | `voice` | the caption or NULL | `voice.file_id` |
+      | `photo` | `photo` | the caption or NULL | `file_id` of the largest `PhotoSize` (the last in the array) |
+      | anything else (a sticker, a document…) | `other` | the caption or NULL | NULL |
+
+      The bot stores one row in the table `inbox` (`user_id` = `from.id`, `kind`, `text`, `file_id`, `received_at`) and
+      sends to that chat exactly:
+
+      > Сохранил ✅
+
+      Each row belongs to the user who sent it: messages of two users are stored under their own `user_id`.
+      Out of scope: recognition, tasks, the calendar, any LLM.
+    prod:
+      signal: "a message was saved: a log line with `event` = `inbox_saved`, `kind` = the kind, and the release's `version`"
+      match: {event: inbox_saved}
+      min: 1
+
+  - id: SK#4
+    from: "skeleton.md, SK-4 GET /healthz"
+    kind: functional
+    text: |
+      | The database | Status | Body (JSON) |
+      |---|---|---|
+      | answers `SELECT 1` | 200 | `{"status": "ok", "version": "<APP_VERSION>"}` |
+      | does not answer | 503 | `{"status": "error"}` (more fields allowed) |
+
+      The server starts and answers `/healthz` even when the database does not answer.
+    prod:
+      signal: none
+      why: "/healthz writes no log line: the release's confirmation asks /healthz for the new version itself (`confirmation` below)"
+
+  - id: SK#5
+    from: "skeleton.md, SK-5 Logs and errors"
+    kind: functional
+    text: |
+      - Every line `serve` writes to stdout is one JSON object with at least `level`, `event` and `version`.
+      - An unhandled exception in an update handler writes a line with `level` = `ERROR` and `event` = `handler_error`,
+        and the bot sends to that chat exactly:
+
+        > Что-то пошло не так, попробуй ещё раз.
+
+      - The process keeps running: the next update is handled and `/healthz` answers.
+    prod:
+      signal: none
+      why: "it shows only when a handler fails, and then the release fails: its confirmation allows no line with `level` = `ERROR` and the new version (`confirmation` below)"
+
+# What a release's confirmation checks, from skeleton.md word for word (agentify/loops/release-confirmation).
+confirmation: |
+  After a release: `/healthz` returns the new `version`; lines with `event` = `start` and `event` = `inbox_saved` appear
+  with that version; no line with `level` = `ERROR` and that version for 10 minutes. Window: at least 10 minutes and at
+  least one `start` and one `inbox_saved`, cap 60 minutes; below that at the cap, `inconclusive`, and the owner sends
+  `/start` and one message as a synthetic run.
+
+# The test seams, from skeleton.md word for word.
+seams: |
+  The contract both the test writer and the worker build to. Tests are black-box: they start the app as a process
+  and talk to it over HTTP.
+
+  - **Python 3.12** (`requires-python = ">=3.12,<3.13"`, `.python-version` = `3.12`), uv. 3.12 because the embedded
+    Postgres used in tests (`pgserver`) has no wheels for 3.13.
+  - **Commands**, run from the repository root:
+    - `uv run python -m todobot migrate`: applies the migrations to `DATABASE_URL`, exits 0.
+    - `uv run python -m todobot serve`: the HTTP server on `PORT`. It does not migrate and does not call
+      `setWebhook`.
+  - **Environment:**
+
+    | Variable | What | Default |
+    |---|---|---|
+    | `DATABASE_URL` | `postgresql://user:pass@host:port/db` (the app converts the scheme for its driver) | required |
+    | `TELEGRAM_BOT_TOKEN` | the bot's token | required |
+    | `TELEGRAM_WEBHOOK_SECRET` | the secret Telegram sends in `X-Telegram-Bot-Api-Secret-Token` | required |
+    | `TELEGRAM_API_BASE` | the Bot API's base URL; calls go to `{base}/bot{token}/{method}` | `https://api.telegram.org` |
+    | `PORT` | the HTTP port | `8080` |
+    | `APP_VERSION` | the release's version, in `/healthz` and every log line | `dev` |
+
+  - **Updates in:** `POST /telegram/webhook` with a Telegram `Update` as the JSON body and the header
+    `X-Telegram-Bot-Api-Secret-Token: <TELEGRAM_WEBHOOK_SECRET>`; the server answers 200. A request without the right
+    secret is not handled (the worker's own tests cover it).
+  - **Replies out:** every reply is an HTTP call to the Bot API's `sendMessage` with `chat_id` and `text` (JSON or
+    form-encoded), never the body of the webhook's response. Tests run a fake Bot API that answers every
+    `/bot<token>/<method>` with `{"ok": true, "result": …}`: a valid `Message` (`message_id`, `date`,
+    `chat: {id, type: "private"}`, `text`) for `sendMessage`, `true` for anything else.
+  - **Database:** tests read the table `inbox` with the columns `user_id` (bigint), `kind` (text), `text` (text, null),
+    `file_id` (text, null), `received_at` (timestamptz). Each test gets a fresh database: `TEST_DATABASE_URL` (a server
+    where tests may create databases) when it is set, otherwise an embedded Postgres started by `pgserver`.
+  - **SK-5's trigger:** `serve` against a fresh database where `migrate` has not run: storing a message fails.
+  - **Logs:** tests read the stdout of the `serve` process.
+  - **Tags:** each acceptance test names its requirement, `test_sk1_…`, `test_sk2_…`; they live in `tests/acceptance/`.
+
+  Settled after the test writer's questions (2026-11-10), seams only, no criterion changed:
+
+  - `serve` listens on `0.0.0.0:PORT`.
+  - `serve` calls the Bot API only to reply: no `getMe`, no `setWebhook` at startup (the fake answers `true` to every
+    method but `sendMessage`).
+  - Every webhook POST with the right secret gets 200, also when its handler fails.
+  - `received_at` is the server's time or the message's `date`, with a time zone; tests accept either.
+  - `APP_VERSION`, when unset, falls back to `RAILWAY_GIT_COMMIT_SHA`, then to `dev`.
+  - Production's `DATABASE_URL` is Neon's: `postgresql://…/neondb?sslmode=require`; the app connects over TLS with it.
+
+# The approved acceptance tests: written by a test writer with a fresh context from skeleton.md, and approved with
+# it. The worker does not change them. The acceptance gate compares them once this file is approved.
+acceptance_tests:
+  red_before_work: "`uv run pytest tests/acceptance` → `19 failed` (`No module named todobot`), 2026-11-10"
+  sha256:
+    tests/acceptance/conftest.py: c41ffbfcdc5cea1ed81077e40d79b3506eefe8a20005e2fed665173c93acfcad
+    tests/acceptance/harness.py: 49ce070de8c412bd287ae7fa6691d6a4d085654b2b5e8ffb99e5b28926a18b58
+    tests/acceptance/test_sk1_start.py: 766583c6908d8d066a2ba0ec50a94aefde31b914e953272b20e5e2da958e6137
+    tests/acceptance/test_sk2_inbox.py: 3058864ab953d89eae8aa5d44b2f4344908c02f6547295e945a22a60bcb4b855
+    tests/acceptance/test_sk4_healthz.py: 800d724933962f6fd0ff7100cb3c482fd2b5d83507622332c14220f7c57f318b
+    tests/acceptance/test_sk5_logs_and_errors.py: 28bab435412c5e84dcc3a639fa9b97e9b4105f087baa9333730b6e1579e9db47
+
+questions:
+  - id: SK?1
+    reason: H1
+    text: "Who may use the bot? (SK-3 restricted it.)"
+    answer: "Any Telegram user may use the bot, and each user's data is theirs from the start; SK-3 was dropped. Decided with the approval of skeleton.md, 2026-11-10."
+  - id: SK?2
+    reason: H1
+    text: "In which language does the bot answer?"
+    answer: "In Russian; the bot texts are exact. Decided with the approval of skeleton.md, 2026-11-10."
+  - id: SK?3
+    reason: H1
+    text: "Can /start fail in a way a test can force? SK#5's apology covers every handler, but SK names a trigger only for storing a message, and /start stores nothing. If it cannot, S01 has no failure example and that is recorded; if it can, name the trigger and S01 gets an example."
+    answer: ""
+  - id: SK?4
+    reason: H1
+    text: "Is there a deadline for «Сохранил ✅», as SK#1 gives 5 seconds for the greeting? None is given and none is invented; the tests wait up to 10 s. A deadline becomes a `within_seconds` in S02's examples and a test."
+    answer: ""
+  - id: SK?5
+    reason: H1
+    text: "Telegram retries a webhook it got no 200 for, so the same update can come twice. One inbox item or two? One adds an example to S02 (the same update twice, one item); two keeps S02 as it is."
+    answer: ""
+  - id: SK?6
+    reason: H1
+    text: "What does the bot do when Telegram refuses or fails a reply (sendMessage)? SK does not say, and the tests' fake Bot API always answers ok. An answer adds Telegram's outcomes to the model and an example for each."
+    answer: ""
+  - id: SK?7
+    reason: H1
+    text: "Updates outside a private chat (a group, a channel) and edited messages: SK covers private chats only, and the bot leaves the others unhandled today. Out of scope for SK, or specified (one example each: nothing stored, no reply)?"
+    answer: ""
