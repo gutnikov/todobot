@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -10,6 +11,9 @@ DEFAULT_API_BASE = "https://api.telegram.org"
 DEFAULT_PORT = 8080
 DEFAULT_VERSION = "dev"
 DEFAULT_POSTHOG_HOST = "https://eu.i.posthog.com"
+
+ALLOWED_USER_IDS = "TELEGRAM_ALLOWED_USER_IDS"
+_DIGITS = re.compile(r"[0-9]+")
 
 
 class ConfigError(Exception):
@@ -40,9 +44,31 @@ def _port(env: Mapping[str, str]) -> int:
     return port
 
 
+def allowed_user_ids(env: Mapping[str, str]) -> frozenset[int] | None:
+    """ACC: the allow list, the Telegram user ids `serve` serves; None, every user, when it is unset or empty.
+
+    The ids are separated by commas, with spaces allowed around them. Anything else is a ConfigError. Its message says
+    which item is wrong, never what it holds: `config_error` also goes to PostHog, which gets no user id (ERR).
+    """
+    raw = env.get(ALLOWED_USER_IDS, "")
+    if not raw.strip():
+        return None
+    items = raw.split(",")
+    ids: set[int] = set()
+    for number, item in enumerate(items, 1):
+        value = item.strip()
+        if not _DIGITS.fullmatch(value) or int(value) == 0:
+            raise ConfigError(
+                f"{ALLOWED_USER_IDS} must be Telegram user ids separated by commas; "
+                f"item {number} of {len(items)} is not one"
+            )
+        ids.add(int(value))
+    return frozenset(ids)
+
+
 @dataclass(frozen=True, kw_only=True)
 class Settings:
-    """What `serve` needs. Secrets stay out of repr, so a logged Settings leaks nothing."""
+    """What `serve` needs. Secrets and user ids stay out of repr, so a logged Settings leaks nothing."""
 
     database_url: str = field(repr=False)
     bot_token: str = field(repr=False)
@@ -50,6 +76,8 @@ class Settings:
     api_base: str = DEFAULT_API_BASE
     port: int = DEFAULT_PORT
     version: str = DEFAULT_VERSION
+    # ACC: the only users the bot serves; None serves every user, as before.
+    allowed_user_ids: frozenset[int] | None = field(default=None, repr=False)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -62,6 +90,7 @@ class Settings:
             api_base=env.get("TELEGRAM_API_BASE") or DEFAULT_API_BASE,
             port=_port(env),
             version=app_version(env),
+            allowed_user_ids=allowed_user_ids(env),
         )
 
 

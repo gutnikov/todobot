@@ -2,13 +2,20 @@
 
 A Telegram bot that takes in tasks as text, voice or pictures. This is the skeleton
 (`agentify/specs/requirements/SK.yaml`, the spec in `agentify/specs/`) with one inbox item per message
-(`DUP.yaml`) and its errors in PostHog (`ERR.yaml`): it keeps every message once and does nothing else with it yet.
+(`DUP.yaml`), its errors in PostHog (`ERR.yaml`) and an allow list of users (`ACC.yaml`): it keeps every message
+once and does nothing else with it yet.
 
 What it does now:
 
 - `/start` gets the greeting (SK-1).
 - Any other private-chat message, other commands included, goes into the sender's `inbox` as `text`, `voice`, `photo`
-  or `other`, and the bot answers "Сохранил ✅" (SK-2). Any Telegram user may use it; each user's rows are theirs.
+  or `other`, and the bot answers "Сохранил ✅" (SK-2). Each user's rows are theirs.
+- With `TELEGRAM_ALLOWED_USER_IDS` set, only the users it names are served (ACC#1). Anyone else's private-chat
+  message, `/start` included, gets "Извини, бот пока закрыт." and nothing else: nothing of it is stored (no `users`
+  row, no `inbox` row), and the bot logs `event=access_denied` with the sender's `user_id` (never what they wrote).
+  At start `serve` logs `event=access_restricted` with `allowed`, the number of ids. Without the variable (or with
+  it empty) any Telegram user may use the bot, as before, and `serve` logs a `WARNING` `event=access_open` (ACC#2).
+  A value that is not ids separated by commas is a `config_error`: `serve` does not start.
 - One inbox item per message (DUP#1). A message is its chat and its `message_id` (in a private chat the chat id is
   the user's id), not the `update_id`. When Telegram sends the same update again, the message is already stored:
   nothing is stored, nothing is sent, and the bot logs `event=inbox_repeat`. A new message with the same text is a
@@ -29,9 +36,11 @@ does not finish gets no answer, so Telegram sends it again and DUP#1 keeps it on
 requests, gives the updates in flight up to 5 s, and cancels the rest unanswered. Replies are Bot API
 `sendMessage` calls, never the webhook's response body. The app never calls `setWebhook` itself.
 
-The log events (`event`): `server_started`, `server_stopping`, `server_stopped`; `start` (a /start answered);
-`inbox_saved` and `inbox_repeat` (with `kind`, `user_id`, `message_id`); `handler_error`, `apology_failed`,
-`update_invalid`, `update_failed` (all `ERROR`); `healthz_failed` and `posthog_failed` (`WARNING`); `http_request`
+The log events (`event`): `server_started`, `server_stopping`, `server_stopped`; `access_restricted` (with
+`allowed`) or `access_open` (`WARNING`) at start; `start` (a /start answered); `inbox_saved` and `inbox_repeat` (with
+`kind`, `user_id`, `message_id`); `access_denied` (a stranger refused, with `user_id`, `message_id`);
+`handler_error`, `apology_failed`, `refusal_failed`, `update_invalid`, `update_failed` (all `ERROR`);
+`healthz_failed` and `posthog_failed` (`WARNING`); `http_request`
 (aiohttp's access log); `log` (a library's line); and around them `migrate_started`, `migrate_finished`,
 `config_error`, `<command>_failed`, `uncaught_exception`, `unraisable_exception`.
 
@@ -40,11 +49,11 @@ The log events (`event`): `server_started`, `server_stopping`, `server_stopped`;
 ```
 src/todobot/
   __main__.py     python -m todobot migrate | serve
-  config.py       environment variables, version fallback
+  config.py       environment variables (the allow list among them), version fallback
   logs.py         JSON lines on stdout
   error_tracking.py  ERROR lines to PostHog as $exception, server_started (only with POSTHOG_PROJECT_TOKEN)
   web.py          aiohttp app: the webhook (answers once the update is handled) and /healthz
-  bot.py          aiogram dispatcher and handlers: /start, inbox, errors
+  bot.py          aiogram dispatcher and handlers: the allow list, /start, inbox, errors
   inbox.py        message kind, and storing it once per message
   texts.py        what the bot says (exact, from the requirement)
   db.py, schema.py, migrate.py, migrations/    SQLAlchemy (async, asyncpg) and Alembic
@@ -98,6 +107,7 @@ The reply then goes to the Bot API at `TELEGRAM_API_BASE`.
 | `TELEGRAM_API_BASE` | the Bot API's base URL; calls go to `{base}/bot{token}/{method}` | `https://api.telegram.org` |
 | `PORT` | the HTTP port | `8080` |
 | `APP_VERSION` | the release's version, in `/healthz` and every log line | `RAILWAY_GIT_COMMIT_SHA`, else `dev` |
+| `TELEGRAM_ALLOWED_USER_IDS` | the only Telegram user ids the bot serves, separated by commas (spaces allowed), e.g. `5812345678, 402117993`; anyone else is refused (ACC). Anything else is a `config_error` and `serve` does not start. In production: the owner's id only | unset: every user is served, with a `WARNING` `access_open` at start |
 | `POSTHOG_PROJECT_TOKEN` | the PostHog project's token (project 344747, organization todobot, EU); without it `serve` sends PostHog nothing | unset |
 | `POSTHOG_HOST` | PostHog's ingestion host | `https://eu.i.posthog.com` |
 
@@ -135,7 +145,7 @@ PostHog. On SIGTERM, `serve` sends what is queued, waiting at most 3 s; what is 
   requests whose required checks passed. Railway does not
   read the file on deploys. The `railway-config` workflow plans a change on its pull request and applies it after
   the merge. Locally, with Node 24: `npm ci --ignore-scripts && railway config plan`. The variables (bot token,
-  `DATABASE_URL`, webhook secret, PostHog's project token) live only in Railway.
+  `DATABASE_URL`, webhook secret, PostHog's project token, the allow list) live only in Railway.
 
 The webhook is registered once, by hand, with the same secret:
 `https://api.telegram.org/bot<token>/setWebhook?url=https://<host>/telegram/webhook&secret_token=<secret>`.

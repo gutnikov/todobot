@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
-from aiogram import Bot, Dispatcher, F, Router
+from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ChatType
 from aiogram.filters import CommandStart
-from aiogram.types import ErrorEvent, Message, Update
+from aiogram.types import ErrorEvent, Message, TelegramObject, Update
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -84,17 +85,62 @@ def _content(message: Message | None) -> tuple[str | None, ...]:
     return (message.text, message.caption, inbox.classify(message).file_id, *sorted(ids))
 
 
-def build_dispatcher(engine: AsyncEngine) -> Dispatcher:
-    """The dispatcher; `engine` reaches the handlers as their `engine` argument."""
+def build_dispatcher(engine: AsyncEngine, *, allowed_user_ids: frozenset[int] | None) -> Dispatcher:
+    """The dispatcher; `engine` reaches the handlers as their `engine` argument. With `allowed_user_ids` (ACC), only
+    those users are served; None serves every user."""
     dispatcher = TodobotDispatcher(engine=engine)
-    dispatcher.include_router(build_router())
+    dispatcher.include_router(build_router(allowed_user_ids=allowed_user_ids))
     return dispatcher
 
 
-def build_router() -> Router:
+class AllowList(BaseMiddleware):
+    """ACC#1: a message from a user the allow list does not name gets texts.REFUSED and nothing else.
+
+    The message observer's inner middleware: it runs once the router has taken the message (a private chat) and a
+    handler matched it, before that handler. For a stranger no handler runs, so nothing of the message is stored.
+    """
+
+    def __init__(self, user_ids: frozenset[int]) -> None:
+        self.user_ids = user_ids
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        if not isinstance(event, Message):  # the middleware is only on messages
+            return await handler(event, data)
+        if event.from_user is not None and event.from_user.id in self.user_ids:
+            return await handler(event, data)
+        await refuse(event)
+        return None
+
+
+async def refuse(message: Message) -> None:
+    """ACC#1: `access_denied`, then the refusal. A refusal Telegram does not take is logged and not apologised for:
+    a stranger gets the refusal or nothing."""
+    user_id = message.from_user.id if message.from_user else None
+    log_event(logger, "access_denied", user_id=user_id, message_id=message.message_id)
+    try:
+        await message.answer(texts.REFUSED)
+    except Exception as exc:
+        log_event(
+            logger,
+            "refusal_failed",
+            level=logging.ERROR,
+            user_id=user_id,
+            error=type(exc).__name__,
+            exc=redact(format_exception(exc), _content(message)),
+        )
+
+
+def build_router(*, allowed_user_ids: frozenset[int] | None) -> Router:
     router = Router(name="skeleton")
     # The bot is for private chats; anything else is left unhandled.
     router.message.filter(F.chat.type == ChatType.PRIVATE)
+    if allowed_user_ids is not None:
+        router.message.middleware(AllowList(allowed_user_ids))
     # /start is a text message. CommandStart alone also matches a caption, which would swallow a photo or a voice
     # note captioned "/start"; those are stored like any other (SK-2).
     # ignore_mention: in a private chat "/start@name" can only be for us, and checking the name would cost a getMe.
