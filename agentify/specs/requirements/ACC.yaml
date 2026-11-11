@@ -1,0 +1,70 @@
+# The bot only for its owner: before the first LLM call, a stranger's message costs nothing and is kept nowhere.
+# From issue #12 (https://github.com/gutnikov/todobot/issues/12) and the owner's answers ACC?1 and ACC?2. It changes
+# what SK#1 and SK#2 mean for a user the allow list does not name ("any Telegram user", SK?1), so its approval
+# names SK too.
+
+key: ACC
+source: "https://github.com/gutnikov/todobot/issues/12"
+title: "the bot only for its owner"
+fetched: 2026-11-11
+status: approved
+approved_by: "the user"
+approved_at: "2026-11-11"
+
+requirements:
+  - id: ACC#1
+    kind: functional
+    text: |
+      When the allow list is set, a private-chat message from a user it does not name, /start included, gets
+      exactly this reply and nothing else:
+
+      > Извини, бот пока закрыт.
+
+      Nothing of that message is stored, and a log line with `event` = `access_denied` is written. A user the allow
+      list names is served as SK and DUP say.
+    prod:
+      signal: none
+      why: "strangers seldom write; the release check reads the startup line access_restricted instead (ACC#2)"
+
+  - id: ACC#2
+    kind: functional
+    text: |
+      `serve` says at start which way it runs: with the allow list set, a log line with `event` = `access_restricted`
+      and the number of users it names; without it, the bot serves every user, as before, and writes a line with
+      level WARNING and `event` = `access_open`.
+    prod:
+      signal: none
+      why: "the line comes once, at the start, before the release's window opens; after the release the agent reads it in Railway's logs and checks that production runs restricted to one user"
+
+seams: |
+  - **Environment:** `TELEGRAM_ALLOWED_USER_IDS`, Telegram user ids separated by commas (spaces allowed). Unset or
+    empty: no allow list (ACC#2). A value that is not such a list is a configuration error: `serve` writes
+    `config_error` and does not start. In production it names the owner only; the value lives in Railway's
+    variables, never in the repository.
+  - **Tests:** SK's, DUP's and ERR's tests run without the variable, so the bot is open in them, as before. ACC's
+    tests set it to Анна (5812345678) and write as Борис (402117993) for a stranger.
+  - **Tags:** `test_acc1_…`, `test_acc2_…`, or the examples' names, in `tests/acceptance/`; earlier approved files
+    are not changed.
+
+# Written by a test writer with a fresh context from this file, the contract and the delta, after the approval.
+# The worker does not change them.
+acceptance_tests:
+  red_before_work: "`uv run pytest tests/acceptance -k 'acc1 or acc2'` → `4 failed, 1 passed` (the stranger got the greeting and «Сохранил ✅»; no access_restricted or access_open line), 2026-11-11; `test_acc1_listed_user_s_message_is_saved_as_before` passes before the work: every user is served today"
+  sha256:
+    tests/acceptance/acc_harness.py: a66588d7a07e15b354bcd6f9c8f70371b42d5c3d5c5436fd960e5e0df132341d
+    tests/acceptance/test_acc1_strangers_are_refused.py: 14b7b6ad816fcf7aff8fcf0df1a85e11e193a1a765972c1683e74480f7cd057f
+    tests/acceptance/test_acc2_access_at_start.py: 6c55981285b9dab0c59cbccdcba0082eee5c170b218b903be58abe95383f4ab2
+
+questions:
+  - id: ACC?1
+    reason: H1
+    text: "What does the bot reply to a stranger's message, /start included?"
+    answer: "Exactly «Извини, бот пока закрыт.»; the message is not stored. Decided by the owner, 2026-11-11."
+  - id: ACC?2
+    reason: H4
+    text: "Without an allow list, is serve open to every user (with a warning), or does it not start? SK's, DUP's and ERR's approved tests run without one."
+    answer: "Open to every user, with a WARNING line at the start; the release check makes sure production runs restricted. Decided by the owner, 2026-11-11."
+  - id: ACC?3
+    reason: H1
+    text: "What happens to a stranger's messages already in the inbox?"
+    answer: "Nothing to do: on 2026-11-11 production's users table holds one user, the owner, and the inbox only their 3 items. Checked by the agent (neonctl, read only)."

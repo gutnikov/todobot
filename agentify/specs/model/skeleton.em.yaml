@@ -1,4 +1,4 @@
-# todobot — Event Model: the skeleton (SK), and what later requirements add to it (DUP, ERR), each element tracing
+# todobot — Event Model: the skeleton (SK), and what later requirements add to it (DUP, ERR, ACC), each element tracing
 # to its requirement in `reqs`.
 # Format: agentify's parts/event-model/format.md. Checks: the layers in agentify/specs/layers.yaml.
 #
@@ -55,6 +55,15 @@ states:
     given: []
     note: "serve runs with POSTHOG_PROJECT_TOKEN and POSTHOG_HOST set: PostHog is the example's PostHog outcome.
       Without them serve sends PostHog nothing, as in every SK and DUP example."
+  closedBot:
+    extends: runningBot
+    given: []
+    note: "serve runs with TELEGRAM_ALLOWED_USER_IDS naming Анна (5812345678) only: the bot is closed to every other
+      user. The example's message comes from Анна."
+  closedBotStrangerWrites:
+    extends: closedBot
+    given: []
+    note: "As closedBot, and the example's message comes from Борис (402117993), whom the allow list does not name."
   annaHitAHandlerError:
     extends: runningBotWithErrorTracking
     given: [HandlerFailed]
@@ -68,7 +77,7 @@ states:
 
 domains:
   MessageHas: [text, voice, photo, anything else]
-  Outcome: [started, saved, failed]
+  Outcome: [started, saved, failed, refused]
   DatabaseCheck: [answers, does not answer]
 
 rules:
@@ -86,11 +95,12 @@ rules:
     kind: table
     inputs: [Outcome]
     output: "the text the bot sends to the chat, exactly"
-    reqs: [SK#1, SK#2, SK#5]
+    reqs: [SK#1, SK#2, SK#5, ACC#1]
     rows:
       - [started, "Привет! Присылай задачи текстом, голосом или картинкой — я их сохраню."]
       - [saved, "Сохранил ✅"]
       - [failed, "Что-то пошло не так, попробуй ещё раз."]
+      - [refused, "Извини, бот пока закрыт."]
   health:
     kind: table
     inputs: [DatabaseCheck]
@@ -133,6 +143,15 @@ slices:
           see:
             - {screen: Log, field: LogLine.event, is: start}
             - {screen: Log, field: LogLine.version, is: "<APP_VERSION>"}
+      - name: stranger's /start is refused
+        given: closedBotStrangerWrites
+        covers: [rule:reply/refused]
+        reqs: [ACC#1]
+        then:
+          see:
+            - {screen: Chat, field: Reply.text, is: "Извини, бот пока закрыт., and no greeting"}
+            - {screen: Chat, field: Reply.chat, is: "Борис's chat, 402117993"}
+            - {screen: Log, field: LogLine.event, is: access_denied}
     # Answered in SK.yaml: no failure example for /start (SK?3); Telegram refusing a reply (SK?6), groups, channels
     # and edited messages (SK?7) are out of SK.
 
@@ -166,6 +185,9 @@ slices:
         stream: Update
         fields: {user_id: cmd}
       RepeatIgnored:
+        stream: Update
+        fields: {user_id: cmd}
+      AccessRefused:
         stream: Update
         fields: {user_id: cmd}
     specs:
@@ -396,6 +418,32 @@ slices:
           see:
             - {screen: Chat, field: Reply.text, is: "Сохранил ✅"}
             - {screen: ErrorTracking, field: TrackedEvent.event, is: "server_started only: nothing for the message"}
+      # ------------------------------------------------ ACC: the bot only for its owner
+      - name: stranger's message is refused and not stored
+        given: closedBotStrangerWrites
+        when: {content: text, text: "Забрать посылку"}
+        external: {Database: answers}
+        covers: [rule:reply/refused]
+        reqs: [ACC#1]
+        then:
+          events: [AccessRefused]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Извини, бот пока закрыт."}
+            - {screen: Chat, field: Reply.chat, is: "Борис's chat, 402117993"}
+            - {screen: Inbox, field: InboxItem.user_id, is: "no inbox item under 402117993"}
+            - {screen: Log, field: LogLine.event, is: access_denied}
+      - name: listed user's message is saved as before
+        given: closedBot
+        when: {content: text, text: "Купить молоко и хлеб"}
+        external: {Database: answers}
+        covers: [rule:reply/saved]
+        reqs: [ACC#1]
+        then:
+          events: [InboxSaved]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Сохранил ✅"}
+            - {screen: Inbox, field: InboxItem.user_id, is: 5812345678}
+            - {screen: Inbox, field: InboxItem.text, is: "Купить молоко и хлеб"}
     # Answered in SK.yaml: no deadline for «Сохранил ✅» (SK?4). A repeated update is DUP's (SK?5).
 
   - id: A01
@@ -490,7 +538,31 @@ slices:
       TrackingRefused:
         stream: Server
         fields: {}
+      AccessRestricted:
+        stream: Server
+        fields: {}
+      AccessOpened:
+        stream: Server
+        fields: {}
     specs:
+      - name: server with an allow list says it is restricted
+        given: closedBot
+        external: {Database: answers}
+        reqs: [ACC#2]
+        then:
+          events: [ServerStarted, AccessRestricted]
+          see:
+            - {screen: Log, field: LogLine.event, is: access_restricted}
+            - {screen: Log, field: LogLine.allowed, is: 1}
+      - name: server without an allow list warns that it is open
+        given: runningBot
+        external: {Database: answers}
+        reqs: [ACC#2]
+        then:
+          events: [ServerStarted, AccessOpened]
+          see:
+            - {screen: Log, field: LogLine.event, is: access_open}
+            - {screen: Log, field: LogLine.level, is: WARNING}
       - name: server start is announced to PostHog with the version
         given: runningBotWithErrorTracking
         external: {Database: answers, PostHog: takes}
@@ -546,13 +618,14 @@ slices:
   - id: V04
     name: The log
     type: view
-    reqs: [SK#1, SK#2, SK#5, DUP#1, ERR#3]
+    reqs: [SK#1, SK#2, SK#5, DUP#1, ERR#3, ACC#1, ACC#2]
     read_model:
       name: LogLine
       fields:
         format: [config]
-        level: [Started, InboxSaved, HandlerFailed, RepeatIgnored, TrackingRefused]
-        event: [Started, InboxSaved, HandlerFailed, RepeatIgnored, TrackingRefused]
+        level: [Started, InboxSaved, HandlerFailed, RepeatIgnored, TrackingRefused, AccessRefused, AccessRestricted, AccessOpened]
+        event: [Started, InboxSaved, HandlerFailed, RepeatIgnored, TrackingRefused, AccessRefused, AccessRestricted, AccessOpened]
+        allowed: [config]
         version: [config]
         kind: [InboxSaved.kind]
     screens: [Log]

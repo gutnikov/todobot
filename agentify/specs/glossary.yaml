@@ -99,3 +99,11 @@ terms:
     meaning: "`serve` starting up; it writes the log line server_started and sends PostHog the event server_started
       with the version (ERR#2)."
     not: [boot, launch]
+  - term: allow list
+    meaning: "The Telegram user ids the bot serves: TELEGRAM_ALLOWED_USER_IDS. In production only the owner. Without
+      it the bot serves every user (ACC#2)."
+    not: [whitelist, acl]
+  - term: stranger
+    meaning: "A Telegram user the allow list does not name. They get «Извини, бот пока закрыт.» and nothing they send
+      is kept (ACC#1)."
+    not: [guest, outsider, intruder]
