@@ -87,3 +87,15 @@ terms:
     meaning: "An update Telegram sends again because it got no answer from the webhook: the same chat and message id.
       The bot keeps its message once and does not reply again (DUP#1)."
     not: [duplicate, redelivery, retry]
+  - term: PostHog
+    meaning: "The service that keeps todobot's errors: PostHog Cloud EU, the organization todobot, its project 344747
+      (ERR?1). It gets no user id and nothing users write (ERR#1, ERR?2)."
+    not: [Sentry]
+  - term: error tracking
+    meaning: "PostHog's error tracking, where every error of todobot goes, and the event server_started at each start
+      (ERR#1, ERR#2). The event model's screen ErrorTracking is what PostHog receives."
+    not: [crash reporting, error monitoring]
+  - term: server start
+    meaning: "`serve` starting up; it writes the log line server_started and sends PostHog the event server_started
+      with the version (ERR#2)."
+    not: [boot, launch]

@@ -1,4 +1,5 @@
-# todobot — Event Model: the skeleton (SK). What agentify/specs/requirements/SK.yaml says, and nothing more.
+# todobot — Event Model: the skeleton (SK), and what later requirements add to it (DUP, ERR), each element tracing
+# to its requirement in `reqs`.
 # Format: agentify's parts/event-model/format.md. Checks: the layers in agentify/specs/layers.yaml.
 #
 # Screens are where a person or a test sees a result: the user's chat with the bot, the inbox as the tests read it
@@ -21,6 +22,10 @@ externals:
       answers: migratedDatabase          # a fresh database, migrated
       doesNotAnswer: closedPortDatabase  # DATABASE_URL points to a port nothing listens on
       storingFails: unmigratedDatabase   # a fresh database where migrate has not run: SK#5's trigger
+  PostHog:
+    outcomes:
+      takes: fakePostHog                 # a fake PostHog at POSTHOG_HOST that records every request and takes it
+      refuses: refusingPostHog           # a fake PostHog at POSTHOG_HOST that answers every request with 500
 clock: false
 
 screens:
@@ -28,6 +33,7 @@ screens:
   Inbox: {route: "the table inbox, read by the tests (SK#2)", pom: inbox}
   Healthz: {route: "GET /healthz", pom: healthz}
   Log: {route: "stdout of `serve`, one line per log line; Railway's logs in production", pom: log}
+  ErrorTracking: {route: "what PostHog receives: in tests the fake at POSTHOG_HOST; in production the project 344747 of the organization todobot (EU)", pom: posthog}
 
 states:
   runningBot:
@@ -44,6 +50,16 @@ states:
     given: [InboxSaved]
     note: "Telegram got no answer for the update with Борис's «Забрать посылку» and sends that same update again: the
       same update_id, chat and message id (DUP#1)."
+  runningBotWithErrorTracking:
+    extends: runningBot
+    given: []
+    note: "serve runs with POSTHOG_PROJECT_TOKEN and POSTHOG_HOST set: PostHog is the example's PostHog outcome.
+      Without them serve sends PostHog nothing, as in every SK and DUP example."
+  annaHitAHandlerError:
+    extends: runningBotWithErrorTracking
+    given: [HandlerFailed]
+    note: "The database was not migrated (Database: storingFails). Анна, Telegram id 5812345678, sent «Купить молоко
+      и хлеб», storing it failed, a handler_error line was written and she got the apology."
   afterHandlerError:
     extends: runningBot
     given: [HandlerFailed]
@@ -369,7 +385,46 @@ slices:
           events: [HandlerFailed]
           see:
             - {screen: Chat, field: Reply.text, is: "Что-то пошло не так, попробуй ещё раз., sent before the webhook answers 200"}
+      # ------------------------------------------------ ERR: todobot's errors in PostHog
+      - name: saved message sends PostHog nothing
+        given: runningBotWithErrorTracking
+        when: {content: text, text: "Купить молоко и хлеб"}
+        external: {Database: answers, PostHog: takes}
+        reqs: [ERR#1]
+        then:
+          events: [InboxSaved]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Сохранил ✅"}
+            - {screen: ErrorTracking, field: TrackedEvent.event, is: "server_started only: nothing for the message"}
     # Answered in SK.yaml: no deadline for «Сохранил ✅» (SK?4). A repeated update is DUP's (SK?5).
+
+  - id: A01
+    name: Report an error to PostHog
+    type: automation
+    trigger: HandlerFailed
+    # No slice-level reqs: its example says which requirement it serves.
+    command:
+      name: ReportError
+      fields: {log_event: system, error_class: system, traceback: system}
+    events:
+      ErrorReported:
+        stream: Server
+        fields: {log_event: cmd, error_class: cmd, traceback: cmd}
+    specs:
+      - name: handler error reaches PostHog without what the user wrote
+        given: annaHitAHandlerError
+        external: {Database: storingFails, PostHog: takes}
+        reqs: [ERR#1]
+        then:
+          events: [ErrorReported]
+          see:
+            - {screen: ErrorTracking, field: TrackedEvent.event, is: "$exception, once for the handler_error line"}
+            - {screen: ErrorTracking, field: TrackedEvent.log_event, is: handler_error}
+            - {screen: ErrorTracking, field: TrackedEvent.error_class, is: "the error type of the handler_error line"}
+            - {screen: ErrorTracking, field: TrackedEvent.distinct_id, is: todobot}
+            - {screen: ErrorTracking, field: TrackedEvent.person_profile, is: "false"}
+            - {screen: ErrorTracking, field: TrackedEvent.version, is: "<APP_VERSION>"}
+            - {screen: ErrorTracking, field: TrackedEvent.payload, is: "nothing of «Купить молоко и хлеб» and no 5812345678 anywhere in what PostHog got"}
 
   - id: V02
     name: The inbox
@@ -418,6 +473,64 @@ slices:
             - {screen: Healthz, field: Health.http_status, is: 503}
             - {screen: Healthz, field: Health.status, is: error}
 
+  - id: S04
+    name: Start the server
+    type: command
+    actor: Operator
+    screen: Log
+    # No slice-level reqs: each example says which requirement it serves.
+    command:
+      name: StartServer
+      fields: {}
+    errors: []
+    events:
+      ServerStarted:
+        stream: Server
+        fields: {}
+      TrackingRefused:
+        stream: Server
+        fields: {}
+    specs:
+      - name: server start is announced to PostHog with the version
+        given: runningBotWithErrorTracking
+        external: {Database: answers, PostHog: takes}
+        reqs: [ERR#2]
+        then:
+          events: [ServerStarted]
+          see:
+            - {screen: ErrorTracking, field: TrackedEvent.event, is: server_started}
+            - {screen: ErrorTracking, field: TrackedEvent.version, is: "<APP_VERSION>"}
+            - {screen: ErrorTracking, field: TrackedEvent.distinct_id, is: todobot}
+            - {screen: ErrorTracking, field: TrackedEvent.person_profile, is: "false"}
+      - name: PostHog refusing leaves the bot running
+        given: runningBotWithErrorTracking
+        when: {}
+        external: {Database: answers, PostHog: refuses}
+        reqs: [ERR#3]
+        then:
+          events: [ServerStarted, TrackingRefused]
+          see:
+            - {screen: Log, field: LogLine.event, is: posthog_failed}
+            - {screen: Log, field: LogLine.level, is: "WARNING on the posthog_failed line, and no line with level ERROR"}
+            - {screen: Healthz, field: Health.http_status, is: 200}
+            - {screen: Chat, field: Reply.text, is: "Сохранил ✅ for a message Анна sends after the start"}
+
+  - id: V05
+    name: Error tracking
+    type: view
+    reqs: [ERR#1, ERR#2]
+    read_model:
+      name: TrackedEvent
+      fields:
+        event: [ServerStarted, ErrorReported]
+        log_event: [ErrorReported.log_event]
+        error_class: [ErrorReported.error_class]
+        distinct_id: [config]
+        person_profile: [config]
+        version: [config]
+        payload: [ServerStarted, ErrorReported]
+    screens: [ErrorTracking]
+
   - id: V03
     name: Health
     type: view
@@ -433,13 +546,13 @@ slices:
   - id: V04
     name: The log
     type: view
-    reqs: [SK#1, SK#2, SK#5, DUP#1]
+    reqs: [SK#1, SK#2, SK#5, DUP#1, ERR#3]
     read_model:
       name: LogLine
       fields:
         format: [config]
-        level: [Started, InboxSaved, HandlerFailed, RepeatIgnored]
-        event: [Started, InboxSaved, HandlerFailed, RepeatIgnored]
+        level: [Started, InboxSaved, HandlerFailed, RepeatIgnored, TrackingRefused]
+        event: [Started, InboxSaved, HandlerFailed, RepeatIgnored, TrackingRefused]
         version: [config]
         kind: [InboxSaved.kind]
     screens: [Log]

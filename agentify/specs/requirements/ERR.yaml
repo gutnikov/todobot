@@ -1,0 +1,82 @@
+# todobot's errors in PostHog's error tracking, and a sign of life there at each start.
+# From the owner's task in the Claude Code session (2026-11-11) and the answers ERR?1 to ERR?3. It adds the slices S04,
+# A01 and V05 to the event model, an example to S02, and the event posthog_failed to SK's log view V04.
+
+key: ERR
+source: "text from the Claude Code session, 2026-11-11: the owner's task 'send todobot's errors to PostHog, better to a project of its own' and the answers ERR?1-3"
+title: "todobot's errors in PostHog"
+fetched: 2026-11-11
+status: approved
+approved_by: "the user"
+approved_at: "2026-11-11"
+
+requirements:
+  - id: ERR#1
+    kind: functional
+    text: |
+      Every log line `serve` writes with level ERROR or CRITICAL also goes to PostHog's error tracking as one error:
+      its log event, its error type and its traceback as the log line has them (what users write cut out), and the
+      release's version. No user id goes with it: one distinct_id, `todobot`, and no person profiles. Nothing else a
+      user does is sent to PostHog.
+    prod:
+      signal: none
+      why: "an error cannot be forced in a release's window, and any line with level ERROR fails the release anyway; ERR#2 shows that the way to PostHog works"
+
+  - id: ERR#2
+    kind: functional
+    text: |
+      When `serve` starts, it sends PostHog one event `server_started` with the release's version.
+    prod:
+      signal: none
+      why: "the event lands in PostHog, not in Railway's logs, which the release-confirmation loop reads. After the release the agent checks, through PostHog's MCP server, that project 344747 got `server_started` with the new version"
+
+  - id: ERR#3
+    kind: functional
+    text: |
+      When PostHog does not take what the bot sends it, the bot goes on as before: it writes a log line with level
+      WARNING and event `posthog_failed`, with no line of level ERROR for it, and replies and stores as usual.
+    prod:
+      signal: none
+      why: "PostHog failing cannot be forced in production"
+
+# Where the errors go, from ERR?1: the organization todobot of PostHog Cloud EU (eu.posthog.com), its one project,
+# 344747. The project's token is public by PostHog's design, but it is configuration: it lives in Railway's variables,
+# never in the repository.
+seams: |
+  - **Environment:** `POSTHOG_PROJECT_TOKEN` (the project's token) and `POSTHOG_HOST` (default
+    `https://eu.i.posthog.com`). Without `POSTHOG_PROJECT_TOKEN`, `serve` sends PostHog nothing and works as before:
+    SK's and DUP's tests run so.
+  - **Tests:** a fake PostHog is an HTTP server at `POSTHOG_HOST` that records every request's JSON body; failing, it
+    answers every request with 500. Tests read the events from the recorded bodies (`event`, `distinct_id`,
+    `properties`), whatever endpoint the SDK posts to. The process sends what it has queued before it exits; tests
+    may wait for it, up to 10 s.
+  - **An error:** PostHog's error event, `$exception` (the SDK's `capture_exception`), with the log event and the
+    version among its properties. Code variables are never captured.
+  - **No user id:** `distinct_id` is `todobot` on every event, and no event makes a person profile
+    (`$process_person_profile` false).
+  - **Tags:** `test_err1_…`, `test_err2_…`, `test_err3_…`, or the examples' names, in `tests/acceptance/`; SK's and
+    DUP's approved files are not changed.
+
+# Written by a test writer with a fresh context from this file, the contract and the delta, after the approval.
+# The worker does not change them.
+acceptance_tests:
+  red_before_work: "`uv run pytest tests/acceptance -k 'err1 or err2 or err3'` → `4 failed` (PostHog got no request at all; no posthog_failed line), 2026-11-11"
+  sha256:
+    tests/acceptance/err_harness.py: 40a2c8a9ebde21d222fd26e99d91b3d1eb135b061501dfdbc5c8b9821c85632e
+    tests/acceptance/test_err1_error_tracking.py: eeddea354621cfd4bb5be2760260913f375d3c2b70ef2c0645cbe1f9c9c9e282
+    tests/acceptance/test_err2_server_started.py: e19916322d34db1d22f93f3c2ad88b736cb8494ad5b9b07493cd322f2c1d69a2
+    tests/acceptance/test_err3_posthog_refusing.py: 15400f56351c7ebb902610f9cfa8c9d698bd53a75f50daa40967970dde264571
+
+questions:
+  - id: ERR?1
+    reason: H4
+    text: "Where do todobot's errors go? PostHog's free plan allows one project per organization, and the existing one holds another app's events."
+    answer: "A new organization, todobot, with its own free project (344747, EU). The owner created it. Decided by the owner, 2026-11-11."
+  - id: ERR?2
+    reason: H4
+    text: "Does the user's Telegram id go to PostHog with an error?"
+    answer: "No: one distinct_id, todobot, and no person profiles. Decided by the owner, 2026-11-11."
+  - id: ERR?3
+    reason: H4
+    text: "How does production show that errors reach PostHog, when no error can be forced in a release's window?"
+    answer: "serve sends one event server_started with the version at startup; after the release the agent checks PostHog got it; a failed upload shows as a log line. Decided by the owner, 2026-11-11."
