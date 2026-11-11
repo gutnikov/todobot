@@ -80,3 +80,10 @@ terms:
     meaning: "Something a user wants done. The greeting asks for tasks, but SK only keeps messages in the inbox and
       makes no tasks yet."
     not: [todo, ticket, job, issue]
+  - term: message id
+    meaning: "Telegram's message_id: unique within a chat. With the chat, it tells one message from another (DUP?2)."
+    not: [message number]
+  - term: repeated update
+    meaning: "An update Telegram sends again because it got no answer from the webhook: the same chat and message id.
+      The bot keeps its message once and does not reply again (DUP#1)."
+    not: [duplicate, redelivery, retry]
