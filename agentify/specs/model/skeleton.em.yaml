@@ -1,4 +1,4 @@
-# todobot — Event Model: the skeleton (SK), and what later requirements add to it (DUP, ERR, ACC), each element tracing
+# todobot — Event Model: the skeleton (SK), and what later requirements add to it (DUP, ERR, ACC, CAP), each element tracing
 # to its requirement in `reqs`.
 # Format: agentify's parts/event-model/format.md. Checks: the layers in agentify/specs/layers.yaml.
 #
@@ -33,6 +33,7 @@ screens:
   Inbox: {route: "the table inbox, read by the tests (SK#2)", pom: inbox}
   Healthz: {route: "GET /healthz", pom: healthz}
   Log: {route: "stdout of `serve`, one line per log line; Railway's logs in production", pom: log}
+  TaskStore: {route: "the table tasks, read by the tests (CAP#1)", pom: taskStore}
   ErrorTracking: {route: "what PostHog receives: in tests the fake at POSTHOG_HOST; in production the project 344747 of the organization todobot (EU)", pom: posthog}
 
 states:
@@ -64,6 +65,20 @@ states:
     extends: closedBot
     given: []
     note: "As closedBot, and the example's message comes from Борис (402117993), whom the allow list does not name."
+  annaRecordedTwoTasks:
+    extends: runningBot
+    given: [TaskRecorded, TaskRecorded]
+    note: "Анна (5812345678) wrote «Сделать поверку счётчиков», then «Записаться к стоматологу»: two tasks, both
+      «записана», in that order."
+  borisAsksAfterAnnasTasks:
+    extends: annaRecordedTwoTasks
+    given: []
+    note: "As annaRecordedTwoTasks, and the example's /tasks comes from Борис (402117993), who recorded nothing."
+  annaRecordedManyLongTasks:
+    extends: runningBot
+    given: [TaskRecorded]
+    note: "Анна recorded 40 tasks, each a text of 300 characters, so her list is longer than one Telegram message
+      (4096 characters)."
   annaHitAHandlerError:
     extends: runningBotWithErrorTracking
     given: [HandlerFailed]
@@ -78,6 +93,7 @@ states:
 domains:
   MessageHas: [text, voice, photo, anything else]
   Outcome: [started, saved, failed, refused]
+  MessageIs: [plain text, command, voice, photo, anything else]
   DatabaseCheck: [answers, does not answer]
 
 rules:
@@ -101,6 +117,17 @@ rules:
       - [saved, "Сохранил ✅"]
       - [failed, "Что-то пошло не так, попробуй ещё раз."]
       - [refused, "Извини, бот пока закрыт."]
+  becomes-task:
+    kind: table
+    inputs: [MessageIs]
+    output: "whether the message also becomes a task, and its status"
+    reqs: [CAP#1]
+    rows:
+      - [plain text, {task: yes, status: записана}]
+      - [command, {task: no}]
+      - [voice, {task: no}]
+      - [photo, {task: no}]
+      - [anything else, {task: no}]
   health:
     kind: table
     inputs: [DatabaseCheck]
@@ -158,12 +185,12 @@ slices:
   - id: V01
     name: The chat
     type: view
-    reqs: [SK#1, SK#2, SK#5]
+    reqs: [SK#1, SK#2, SK#5, CAP#2]
     read_model:
       name: Reply
       fields:
         chat: [Started.user_id, InboxSaved.user_id, HandlerFailed.user_id]
-        text: [rule:reply]
+        text: [rule:reply, TasksListed]
     screens: [Chat]
 
   - id: S02
@@ -190,6 +217,9 @@ slices:
       AccessRefused:
         stream: Update
         fields: {user_id: cmd}
+      TaskRecorded:
+        stream: Task
+        fields: {user_id: cmd, text: cmd, status: "rule:becomes-task", created_at: system}
     specs:
       - name: text message is saved as text and acknowledged
         given: runningBot
@@ -444,7 +474,151 @@ slices:
             - {screen: Chat, field: Reply.text, is: "Сохранил ✅"}
             - {screen: Inbox, field: InboxItem.user_id, is: 5812345678}
             - {screen: Inbox, field: InboxItem.text, is: "Купить молоко и хлеб"}
+      # ------------------------------------------------ CAP: recording a task
+      - name: plain text becomes a recorded task
+        given: runningBot
+        when: {content: text, text: "Сделать поверку счётчиков"}
+        external: {Database: answers}
+        covers: [rule:becomes-task/plain text]
+        reqs: [CAP#1]
+        then:
+          events: [InboxSaved, TaskRecorded]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Сохранил ✅"}
+            - {screen: TaskStore, field: Task.text, is: "Сделать поверку счётчиков"}
+            - {screen: TaskStore, field: Task.status, is: recorded}
+            - {screen: TaskStore, field: Task.user_id, is: 5812345678}
+            - {screen: TaskStore, field: Task.created_at, is: "the time the message came, with a time zone"}
+            - {screen: Inbox, field: InboxItem.text, is: "Сделать поверку счётчиков"}
+            - {screen: Log, field: LogLine.event, is: task_recorded}
+      - name: command is not a task
+        given: runningBot
+        when: {content: text, text: "/help"}
+        external: {Database: answers}
+        covers: [rule:becomes-task/command]
+        reqs: [CAP#1]
+        then:
+          events: [InboxSaved]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Сохранил ✅"}
+            - {screen: TaskStore, field: Task.text, is: "no task"}
+            - {screen: Inbox, field: InboxItem.text, is: "/help"}
+      - name: voice note is not a task
+        given: runningBot
+        when: {content: voice}
+        external: {Database: answers}
+        covers: [rule:becomes-task/voice]
+        reqs: [CAP#1]
+        then:
+          events: [InboxSaved]
+          see:
+            - {screen: TaskStore, field: Task.text, is: "no task"}
+            - {screen: Inbox, field: InboxItem.kind, is: voice}
+      - name: photo is not a task
+        given: runningBot
+        when: {content: photo, caption: "Чек из аптеки — вернуть до пятницы"}
+        external: {Database: answers}
+        covers: [rule:becomes-task/photo]
+        reqs: [CAP#1]
+        then:
+          events: [InboxSaved]
+          see:
+            - {screen: TaskStore, field: Task.text, is: "no task"}
+      - name: sticker is not a task
+        given: runningBot
+        when: {content: sticker}
+        external: {Database: answers}
+        covers: [rule:becomes-task/anything else]
+        reqs: [CAP#1]
+        then:
+          events: [InboxSaved]
+          see:
+            - {screen: TaskStore, field: Task.text, is: "no task"}
+      - name: message with several things is one task
+        given: runningBot
+        when: {content: text, text: "Купить молоко\nПозвонить маме"}
+        external: {Database: answers}
+        reqs: [CAP#1]
+        then:
+          events: [InboxSaved, TaskRecorded]
+          see:
+            - {screen: TaskStore, field: Task.text, is: "one task: «Купить молоко\nПозвонить маме»"}
+      - name: repeated update makes no second task
+        given: borisUpdateComesAgain
+        when: {content: text, text: "Забрать посылку"}
+        external: {Database: answers}
+        reqs: [CAP#1]
+        then:
+          events: [RepeatIgnored]
+          see:
+            - {screen: TaskStore, field: Task.text, is: "«Забрать посылку» once under 402117993"}
     # Answered in SK.yaml: no deadline for «Сохранил ✅» (SK?4). A repeated update is DUP's (SK?5).
+
+  - id: S05
+    name: List tasks
+    type: command
+    actor: User
+    screen: Chat
+    # No slice-level reqs: each example says which requirement it serves.
+    command:
+      name: ListTasks
+      fields: {user_id: system}
+    errors: []
+    events:
+      TasksListed:
+        stream: Task
+        fields: {user_id: cmd}
+    specs:
+      - name: tasks list shows recorded tasks oldest first
+        given: annaRecordedTwoTasks
+        reqs: [CAP#2]
+        then:
+          events: [TasksListed]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Твои задачи:\n1. Сделать поверку счётчиков — записана\n2. Записаться к стоматологу — записана"}
+            - {screen: Log, field: LogLine.event, is: tasks_listed}
+      - name: empty tasks list
+        given: runningBot
+        reqs: [CAP#2]
+        then:
+          events: [TasksListed]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Задач пока нет."}
+      - name: tasks list shows only the sender's tasks
+        given: borisAsksAfterAnnasTasks
+        reqs: [CAP#2]
+        then:
+          events: [TasksListed]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Задач пока нет., in Борис's chat"}
+      - name: /tasks is neither an inbox item nor a task
+        given: runningBot
+        reqs: [CAP#2]
+        then:
+          events: [TasksListed]
+          see:
+            - {screen: Inbox, field: InboxItem.text, is: "no inbox item"}
+            - {screen: TaskStore, field: Task.text, is: "no task"}
+      - name: long tasks list is split into several messages
+        given: annaRecordedManyLongTasks
+        reqs: [CAP#2]
+        then:
+          events: [TasksListed]
+          see:
+            - {screen: Chat, field: Reply.text, is: "several messages, each at most 4096 characters; together «Твои задачи:» and all 40 lines in order"}
+
+  - id: V06
+    name: The tasks
+    type: view
+    reqs: [CAP#1]
+    read_model:
+      name: Task
+      fields:
+        user_id: [TaskRecorded.user_id]
+        text: [TaskRecorded.text]
+        status: [TaskRecorded.status]
+        created_at: [TaskRecorded.created_at]
+    screens: [TaskStore]
 
   - id: A01
     name: Report an error to PostHog
@@ -618,13 +792,13 @@ slices:
   - id: V04
     name: The log
     type: view
-    reqs: [SK#1, SK#2, SK#5, DUP#1, ERR#3, ACC#1, ACC#2]
+    reqs: [SK#1, SK#2, SK#5, DUP#1, ERR#3, ACC#1, ACC#2, CAP#1, CAP#2]
     read_model:
       name: LogLine
       fields:
         format: [config]
-        level: [Started, InboxSaved, HandlerFailed, RepeatIgnored, TrackingRefused, AccessRefused, AccessRestricted, AccessOpened]
-        event: [Started, InboxSaved, HandlerFailed, RepeatIgnored, TrackingRefused, AccessRefused, AccessRestricted, AccessOpened]
+        level: [Started, InboxSaved, HandlerFailed, RepeatIgnored, TrackingRefused, AccessRefused, AccessRestricted, AccessOpened, TaskRecorded, TasksListed]
+        event: [Started, InboxSaved, HandlerFailed, RepeatIgnored, TrackingRefused, AccessRefused, AccessRestricted, AccessOpened, TaskRecorded, TasksListed]
         allowed: [config]
         version: [config]
         kind: [InboxSaved.kind]

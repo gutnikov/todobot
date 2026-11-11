@@ -31,8 +31,8 @@ MARKERS = ("QX7", "QY8", "QZ9", "QW6")
 PHOTO = [{"file_id": "QW6-photo-file-id", "file_unique_id": "u-x", "width": 1280, "height": 960}]
 
 BREAKAGES = {
-    # The INSERT fails with the text among its bound parameters.
-    "inbox-missing": ("DROP TABLE inbox", 'relation "inbox" does not exist'),
+    # The INSERT fails with the text among its bound parameters. CASCADE drops the foreign key of `tasks` on it.
+    "inbox-missing": ("DROP TABLE inbox CASCADE", 'relation "inbox" does not exist'),
     # Postgres rejects the row and quotes it back: DETAIL: Failing row contains (..., <text>, ...).
     "row-rejected": ("ALTER TABLE inbox ADD COLUMN must_have integer NOT NULL", "violates not-null constraint"),
 }

@@ -2,16 +2,27 @@
 
 A Telegram bot that takes in tasks as text, voice or pictures. This is the skeleton
 (`agentify/specs/requirements/SK.yaml`, the spec in `agentify/specs/`) with one inbox item per message
-(`DUP.yaml`), its errors in PostHog (`ERR.yaml`) and an allow list of users (`ACC.yaml`): it keeps every message
-once and does nothing else with it yet.
+(`DUP.yaml`), its errors in PostHog (`ERR.yaml`), an allow list of users (`ACC.yaml`) and recorded tasks
+(`CAP.yaml`): it keeps every message once, makes a task of a plain text, and lists the tasks on `/tasks`.
 
 What it does now:
 
 - `/start` gets the greeting (SK-1).
-- Any other private-chat message, other commands included, goes into the sender's `inbox` as `text`, `voice`, `photo`
-  or `other`, and the bot answers "Сохранил ✅" (SK-2). Each user's rows are theirs.
+- Any other private-chat message but `/tasks`, other commands included, goes into the sender's `inbox` as `text`,
+  `voice`, `photo` or `other`, and the bot answers "Сохранил ✅" (SK-2). Each user's rows are theirs.
+- A plain text (one that does not start with `/`) also becomes one task in the table `tasks`, with status
+  `recorded` («записана»), its text the message's text, whatever it names, tied to its inbox item by `user_id` and
+  `message_id` (CAP#1). It is recorded in the transaction that stores the item, so an update Telegram sends again
+  makes no second task; the reply stays "Сохранил ✅". Commands, voice notes, photos (captions too) and anything
+  else stay inbox items only. Inbox items stored before CAP are not tasks.
+- `/tasks` answers with the sender's tasks, oldest first: "Твои задачи:" and a line `<n>. <text> — записана` for
+  each, or "Задач пока нет." when there is none (CAP#2). It is neither an inbox item nor a task. A list longer than
+  one Telegram message (4096 UTF-16 code units, as Telegram counts) comes as several messages, split between task
+  lines, each going on where the last ended; a single task line longer than that gets messages of its own, cut
+  after the last space that fits (mid-word only if none does). The command goes into the bot's menu by hand,
+  through BotFather.
 - With `TELEGRAM_ALLOWED_USER_IDS` set, only the users it names are served (ACC#1). Anyone else's private-chat
-  message, `/start` included, gets "Извини, бот пока закрыт." and nothing else: nothing of it is stored (no `users`
+  message, `/start` and `/tasks` included, gets "Извини, бот пока закрыт." and nothing else: nothing of it is stored (no `users`
   row, no `inbox` row), and the bot logs `event=access_denied` with the sender's `user_id` (never what they wrote).
   At start `serve` logs `event=access_restricted` with `allowed`, the number of ids. Without the variable (or with
   it empty) any Telegram user may use the bot, as before, and `serve` logs a `WARNING` `event=access_open` (ACC#2).
@@ -26,6 +37,8 @@ What it does now:
   of the logs: database errors carry no parameters, the message's text and caption are cut out of the
   `handler_error` traceback (with the user's ids: a rejected row's DETAIL quotes them), and an update that does
   not validate (or a body that is not JSON) is one `update_invalid` line with field locations and error types only.
+  A `/tasks` list that cannot be sent is a `TasksNotSentError` with the failing message's number and the cause's
+  type (and the Bot API's description), never the cause's traceback, which can quote the list.
 - With `POSTHOG_PROJECT_TOKEN` set, every `ERROR` or `CRITICAL` line also goes to PostHog's error tracking, and each
   start sends PostHog `server_started` (ERR); see [Errors in PostHog](#errors-in-posthog).
 
@@ -38,7 +51,9 @@ requests, gives the updates in flight up to 5 s, and cancels the rest unanswered
 
 The log events (`event`): `server_started`, `server_stopping`, `server_stopped`; `access_restricted` (with
 `allowed`) or `access_open` (`WARNING`) at start; `start` (a /start answered); `inbox_saved` and `inbox_repeat` (with
-`kind`, `user_id`, `message_id`); `access_denied` (a stranger refused, with `user_id`, `message_id`);
+`kind`, `user_id`, `message_id`); `task_recorded` (a plain text became a task, with `user_id`, `message_id`);
+`tasks_listed` (a `/tasks` answered, with `user_id`, `tasks` and `messages`, the counts); `access_denied` (a stranger
+refused, with `user_id`, `message_id`);
 `handler_error`, `apology_failed`, `refusal_failed`, `update_invalid`, `update_failed` (all `ERROR`);
 `healthz_failed` and `posthog_failed` (`WARNING`); `http_request`
 (aiohttp's access log); `log` (a library's line); and around them `migrate_started`, `migrate_finished`,
@@ -53,8 +68,9 @@ src/todobot/
   logs.py         JSON lines on stdout
   error_tracking.py  ERROR lines to PostHog as $exception, server_started (only with POSTHOG_PROJECT_TOKEN)
   web.py          aiohttp app: the webhook (answers once the update is handled) and /healthz
-  bot.py          aiogram dispatcher and handlers: the allow list, /start, inbox, errors
-  inbox.py        message kind, and storing it once per message
+  bot.py          aiogram dispatcher and handlers: the allow list, /start, /tasks, inbox, errors
+  inbox.py        message kind, and storing it once per message, with its task when it is a plain text
+  tasks.py        recording a task, the sender's tasks, and the /tasks list as Telegram messages
   texts.py        what the bot says (exact, from the requirement)
   db.py, schema.py, migrate.py, migrations/    SQLAlchemy (async, asyncpg) and Alembic
 tests/unit/       our tests (real Postgres, no database mocks)

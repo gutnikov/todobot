@@ -1,0 +1,83 @@
+# Recording a task: writing it down costs nothing, and the list shows what is recorded.
+# From issue #14 (https://github.com/gutnikov/todobot/issues/14) and the owner's answers CAP?1 to CAP?4. It adds a
+# task to SK's inbox flow for plain text and the command /tasks; SK#2's reply stays «Сохранил ✅», but /tasks is no
+# longer an inbox item, so the approval names SK too.
+
+key: CAP
+source: "https://github.com/gutnikov/todobot/issues/14"
+title: "recording a task"
+fetched: 2026-11-11
+status: approved
+approved_by: "the user"
+approved_at: "2026-11-11"
+
+requirements:
+  - id: CAP#1
+    kind: functional
+    text: |
+      A plain text message (one that is not a command) becomes one task with status «записана», whose text is the
+      message's text, tied to its inbox item. The bot stores the inbox item and replies «Сохранил ✅», as SK#2 says.
+      A message with several things in it is still one task. A command, a voice note, a photo or anything else stays
+      an inbox item only, as before. A repeated update makes no second task (DUP#1). Messages from before this
+      requirement do not become tasks.
+    prod:
+      signal: "a task was recorded: a log line with `event` = `task_recorded` and the release's version"
+      match: {event: task_recorded}
+      min: 1
+
+  - id: CAP#2
+    kind: functional
+    text: |
+      `/tasks` replies with the sender's tasks, oldest first, exactly in this form:
+
+      > Твои задачи:
+      > 1. <text of the first task> — записана
+      > 2. <text of the second task> — записана
+
+      and, when the sender has none, exactly:
+
+      > Задач пока нет.
+
+      A list longer than one Telegram message is sent as several messages, each starting where the last ended. Only
+      the sender's own tasks are shown. `/tasks` is neither an inbox item nor a task.
+    prod:
+      signal: "the list was asked for: a log line with `event` = `tasks_listed` and the release's version"
+      match: {event: tasks_listed}
+      min: 1
+
+seams: |
+  - **Tasks in the database:** tests read the tasks from the table `tasks` with at least `user_id` (bigint), `text`
+    (text), `status` (text, `recorded` for «записана») and `created_at` (timestamptz); the worker adds what else it
+    needs (the tie to the inbox item). The status's Russian label is the bot's text, in `texts.py`.
+  - **Commands:** a text that starts with `/` is a command. `/start` is SK#1's, `/tasks` is CAP#2's; any other
+    command is an inbox item only.
+  - **Tests:** SK's, DUP's, ERR's and ACC's seams hold; CAP's tests run without an allow list, like SK's.
+  - **Tags:** `test_cap1_…`, `test_cap2_…`, or the examples' names, in `tests/acceptance/`; earlier approved files
+    are not changed.
+
+# Written by a test writer with a fresh context from this file, the contract and the delta, after the approval.
+# The worker does not change them.
+acceptance_tests:
+  red_before_work: "`uv run pytest tests/acceptance -k 'cap1 or cap2'` → `12 failed` (no table tasks; /tasks answered «Сохранил ✅» and stored), 2026-11-11"
+  sha256:
+    tests/acceptance/cap_harness.py: 385dcd04ceb970d113095515f6091654035e27b181e2b9d1d0666546dc3bd5d3
+    tests/acceptance/test_cap1_recording_a_task.py: f508660c2b576ccf08432ee04d092981010139d500b34247ad4d25d928881b80
+    tests/acceptance/test_cap2_tasks_list.py: 777662669954e3f8b9527c5f603a0ad1eccd85ffa4ad42577a250909be9a4d1e
+
+questions:
+  - id: CAP?1
+    reason: H4
+    text: "What does the bot reply when it records a task?"
+    answer: "«Сохранил ✅», as now: SK's reply and tests stay. Decided by the owner, 2026-11-11."
+  - id: CAP?2
+    reason: H4
+    text: "How does the owner open the task list: a command or a keyboard button?"
+    answer: "The command /tasks; it is added to the bot's menu by hand through @BotFather. Decided by the owner, 2026-11-11."
+  - id: CAP?3
+    reason: H4
+    text: "A message with several things in it: one task or several?"
+    answer: "One task; the agent may split it later (#15). Decided by the owner, 2026-11-11."
+  - id: CAP?4
+    reason: H4
+    text: "Do the owner's earlier inbox items become tasks?"
+    answer: "No: only messages after the release. Decided by the owner, 2026-11-11."
