@@ -1,0 +1,68 @@
+# One inbox item per message, and no message lost: Telegram may send an update again, and the bot keeps it once.
+# From the owner's task in the Claude Code session (2026-11-11), which SK?5 left to a separate requirement, and the
+# owner's answers DUP?1 to DUP?3. SK.yaml stays as approved; this file adds to its slice S02 and its log view V04.
+
+key: DUP
+source: "text from the Claude Code session, 2026-11-11: the owner's task 'one inbox item per Telegram update' (SK?5) and the answers DUP?1-3"
+title: "one inbox item per message, with no message lost"
+fetched: 2026-11-11
+status: approved
+approved_by: "the user"
+approved_at: "2026-11-11"
+
+requirements:
+  - id: DUP#1
+    kind: functional
+    text: |
+      When Telegram sends the same update again (the same chat and `message_id`), the bot keeps one inbox item for
+      that message and does not reply again. A new message with the same text is a new inbox item.
+    prod:
+      signal: none
+      why: "Telegram sends an update again only when it got no 200; a release's window cannot wait for one. When it
+        happens, the bot writes a log line with `event` = `inbox_repeat`."
+
+  - id: DUP#2
+    kind: functional
+    text: |
+      The bot answers Telegram's webhook only after it has handled the update: the message is stored and the reply
+      sent, or, when handling fails, the apology tried (SK#5). An update the bot did not finish handling gets no
+      answer, so Telegram sends it again, and DUP#1 keeps it once.
+    prod:
+      signal: none
+      why: "it shows as no message lost when the process stops, which a release's window cannot force; SK's
+        `inbox_saved` lines still show that messages are stored"
+
+# The test seams, for the test writer and the worker. SK's seams hold.
+seams: |
+  - **The same update again:** a test posts the same Update JSON to `POST /telegram/webhook` twice: the same
+    `update_id`, chat and `message_id`. A new message has a `message_id` of its own.
+  - **The order of the answer:** a test may make the fake Bot API hold `sendMessage` before it answers; the webhook's
+    200 then comes only after the `sendMessage` call reached the fake, and the inbox item is stored by then.
+  - **Database:** tests count inbox items by `user_id` and `text`. The worker keeps the message's identity in the
+    `inbox` table as it sees fit; SK's columns stay as they are.
+  - **Tags:** `test_dup1_…`, `test_dup2_…`, or the examples' names; the files live in `tests/acceptance/`. SK's
+    approved files (`conftest.py`, `harness.py`, `test_sk*`) are not changed: what a DUP test needs beyond them lives
+    in its own files.
+
+# Written by a test writer with a fresh context from this file, the contract and the delta, after the approval.
+# The worker does not change them.
+acceptance_tests:
+  red_before_work: "`uv run pytest tests/acceptance -k dup` → `3 failed, 1 passed` (the repeat stored twice; the webhook answered 200 before storing and before the reply), 2026-11-11; `test_dup1_new_message_with_the_same_text_is_saved_again` passes before the work: every message is stored today"
+  sha256:
+    tests/acceptance/dup_harness.py: 6d361d27635dbe143e59cd68a54115f0811a077ee4d1dee536d0c4fb39910565
+    tests/acceptance/test_dup1_repeated_update.py: 9a16b9d5578f20865c0189a49af5b6b53277cd1f38befa4b7ef2eb159a14482c
+    tests/acceptance/test_dup2_webhook_answer_order.py: a1daa31e0fbf2307818fbfa47527d2286a3b46228ca7d1eb98cf14161fc332f7
+
+questions:
+  - id: DUP?1
+    reason: H4
+    text: "When the same update comes again and its message is already stored, does the bot reply «Сохранил ✅» again?"
+    answer: "No: one message, one inbox item, one reply. Decided by the owner, 2026-11-11."
+  - id: DUP?2
+    reason: H4
+    text: "What makes two updates the same: update_id, or the chat and message_id? Telegram picks the next update_id at random after a week without updates, so an old one could come back with a new message."
+    answer: "The chat and message_id. Decided by the owner, 2026-11-11."
+  - id: DUP?3
+    reason: H4
+    text: "Only no second inbox item, or also no message lost: the webhook answers 200 only after the update is handled?"
+    answer: "Exactly one: no second item and no message lost; the webhook answers after the update is handled. Decided by the owner, 2026-11-11."

@@ -26,12 +26,12 @@ def build_bot(token: str, api_base: str) -> Bot:
 
 
 class TodobotDispatcher(Dispatcher):
-    """aiogram's Dispatcher, except that what users write cannot reach the logs on the way in.
+    """aiogram's Dispatcher, except that what users write cannot reach the logs on the way in, and nothing raises.
 
-    aiogram's webhook handler feeds every update to `feed_raw_update` in a background task. Out of the box, an update
-    that does not validate fails that task, and asyncio logs the ValidationError, whose message quotes the input:
-    the user's text. Here it becomes one `update_invalid` line with field locations and error types only. An
-    exception that escapes the errors handler (none should) is logged likewise, without the message's content.
+    The webhook (`todobot.web.WebhookHandler`) feeds every update to `feed_raw_update` and answers once it returns.
+    Out of the box, an update that does not validate raises a ValidationError, whose message quotes the input: the
+    user's text. Here it becomes one `update_invalid` line with field locations and error types only. An exception
+    that escapes the errors handler (none should) is logged likewise, without the message's content.
     """
 
     async def feed_raw_update(self, bot: Bot, update: dict[str, Any], **kwargs: Any) -> Any:
@@ -43,7 +43,7 @@ class TodobotDispatcher(Dispatcher):
                 logger,
                 "update_invalid",
                 level=logging.ERROR,
-                update_id=_update_id(update),
+                update_id=update_id_of(update),
                 error=type(exc).__name__,
                 problems=[
                     f"{'.'.join(map(str, problem['loc'])) or 'update'}: {problem['type']}" for problem in problems
@@ -64,7 +64,8 @@ class TodobotDispatcher(Dispatcher):
             return None
 
 
-def _update_id(update: object) -> int | None:
+def update_id_of(update: object) -> int | None:
+    """The `update_id` of a raw update, when it has a valid one."""
     value = update.get("update_id") if isinstance(update, dict) else None
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
@@ -101,12 +102,19 @@ async def on_start(message: Message) -> None:
 
 
 async def on_message(message: Message, engine: AsyncEngine) -> None:
-    """SK-2: any other message (other commands included) goes to the sender's inbox."""
+    """SK-2: any other message (other commands included) goes to the sender's inbox.
+
+    DUP#1: Telegram's repeat of an update (the same chat and message_id) finds its message stored; it is kept once
+    and not replied to again.
+    """
     if message.from_user is None:  # never in a private chat; there would be no one to store it for
         return
+    user_id = message.from_user.id
     item = inbox.classify(message)
-    await inbox.save(engine, message.from_user.id, item)
-    log_event(logger, "inbox_saved", kind=item.kind, user_id=message.from_user.id)
+    if not await inbox.save(engine, user_id, message.message_id, item):
+        log_event(logger, "inbox_repeat", kind=item.kind, user_id=user_id, message_id=message.message_id)
+        return
+    log_event(logger, "inbox_saved", kind=item.kind, user_id=user_id, message_id=message.message_id)
     await message.answer(texts.SAVED)
 
 

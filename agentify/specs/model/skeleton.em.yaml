@@ -39,6 +39,11 @@ states:
     extends: runningBot
     given: [InboxSaved]
     note: "Борис, Telegram id 402117993, sent the text «Забрать посылку»: one inbox item, under his id."
+  borisUpdateComesAgain:
+    extends: borisSavedAMessage
+    given: [InboxSaved]
+    note: "Telegram got no answer for the update with Борис's «Забрать посылку» and sends that same update again: the
+      same update_id, chat and message id (DUP#1)."
   afterHandlerError:
     extends: runningBot
     given: [HandlerFailed]
@@ -142,6 +147,9 @@ slices:
         stream: Inbox
         fields: {user_id: cmd, kind: "rule:inbox-item", text: "rule:inbox-item", file_id: "rule:inbox-item", received_at: system}
       HandlerFailed:
+        stream: Update
+        fields: {user_id: cmd}
+      RepeatIgnored:
         stream: Update
         fields: {user_id: cmd}
     specs:
@@ -319,7 +327,49 @@ slices:
             - {screen: Chat, field: Reply.chat, is: "Борис's chat, 402117993"}
             - {screen: Healthz, field: Health.http_status, is: 200}
             - {screen: Healthz, field: Health.status, is: ok}
-    # Answered in SK.yaml: no deadline for «Сохранил ✅» (SK?4); a repeated update is left to a separate requirement (SK?5).
+      # ------------------------------------------------ DUP: one inbox item per message, and no message lost
+      - name: repeated update is kept once and not replied to again
+        given: borisUpdateComesAgain
+        when: {content: text, text: "Забрать посылку"}
+        external: {Database: answers}
+        reqs: [DUP#1]
+        then:
+          events: [RepeatIgnored]
+          see:
+            - {screen: Inbox, field: InboxItem.text, is: "«Забрать посылку» once: one inbox item under 402117993"}
+            - {screen: Chat, field: Reply.text, is: "«Сохранил ✅» once in Борис's chat: nothing for the repeated update"}
+            - {screen: Log, field: LogLine.event, is: inbox_repeat}
+            - {screen: Log, field: LogLine.version, is: "<APP_VERSION>"}
+      - name: new message with the same text is saved again
+        given: borisSavedAMessage
+        when: {content: text, text: "Забрать посылку"}
+        external: {Database: answers}
+        reqs: [DUP#1]
+        then:
+          events: [InboxSaved]
+          see:
+            - {screen: Inbox, field: InboxItem.text, is: "«Забрать посылку» twice under 402117993: a new message id is a new message"}
+            - {screen: Chat, field: Reply.text, is: "Сохранил ✅"}
+      - name: webhook answers after the message is stored and the reply sent
+        given: runningBot
+        when: {content: text, text: "Купить молоко и хлеб"}
+        external: {Database: answers}
+        reqs: [DUP#2]
+        then:
+          events: [InboxSaved]
+          see:
+            - {screen: Inbox, field: InboxItem.text, is: "Купить молоко и хлеб, stored before the webhook answers 200"}
+            - {screen: Chat, field: Reply.text, is: "Сохранил ✅, sent before the webhook answers 200"}
+      - name: webhook answers after the apology when storing fails
+        given: runningBot
+        when: {content: text, text: "Купить молоко и хлеб"}
+        external: {Database: storingFails}
+        reqs: [DUP#2]
+        then:
+          events: [HandlerFailed]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Что-то пошло не так, попробуй ещё раз., sent before the webhook answers 200"}
+    # Answered in SK.yaml: no deadline for «Сохранил ✅» (SK?4). A repeated update is DUP's (SK?5).
 
   - id: V02
     name: The inbox
@@ -383,13 +433,13 @@ slices:
   - id: V04
     name: The log
     type: view
-    reqs: [SK#1, SK#2, SK#5]
+    reqs: [SK#1, SK#2, SK#5, DUP#1]
     read_model:
       name: LogLine
       fields:
         format: [config]
-        level: [Started, InboxSaved, HandlerFailed]
-        event: [Started, InboxSaved, HandlerFailed]
+        level: [Started, InboxSaved, HandlerFailed, RepeatIgnored]
+        event: [Started, InboxSaved, HandlerFailed, RepeatIgnored]
         version: [config]
         kind: [InboxSaved.kind]
     screens: [Log]

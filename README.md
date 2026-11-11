@@ -1,23 +1,37 @@
 # todobot
 
 A Telegram bot that takes in tasks as text, voice or pictures. This is the skeleton
-(`agentify/specs/requirements/SK.yaml`, the spec in `agentify/specs/`): it keeps every message and does nothing
-else with it yet.
+(`agentify/specs/requirements/SK.yaml`, the spec in `agentify/specs/`) with one inbox item per message
+(`DUP.yaml`): it keeps every message once and does nothing else with it yet.
 
 What it does now:
 
 - `/start` gets the greeting (SK-1).
 - Any other private-chat message, other commands included, goes into the sender's `inbox` as `text`, `voice`, `photo`
   or `other`, and the bot answers "Сохранил ✅" (SK-2). Any Telegram user may use it; each user's rows are theirs.
+- One inbox item per message (DUP#1). A message is its chat and its `message_id` (in a private chat the chat id is
+  the user's id), not the `update_id`. When Telegram sends the same update again, the message is already stored:
+  nothing is stored, nothing is sent, and the bot logs `event=inbox_repeat`. A new message with the same text is a
+  new item.
 - `GET /healthz` answers 200 `{"status": "ok", "version": …}` when the database answers, else 503 (SK-4).
 - Every line on stdout is one JSON object with `level`, `event` and `version`. A handler that fails logs
   `event=handler_error`, apologises in the chat, and the server keeps running (SK-5). What users write stays out
   of the logs: database errors carry no parameters, the message's text and caption are cut out of the
-  `handler_error` traceback, and an update that does not validate is one `update_invalid` line with field
-  locations and error types only.
+  `handler_error` traceback, and an update that does not validate (or a body that is not JSON) is one
+  `update_invalid` line with field locations and error types only.
 
-Updates come in by webhook (`POST /telegram/webhook`, checked against `TELEGRAM_WEBHOOK_SECRET`). Replies are Bot
-API `sendMessage` calls. The app never calls `setWebhook` itself.
+Updates come in by webhook (`POST /telegram/webhook`, checked against `TELEGRAM_WEBHOOK_SECRET`). The webhook
+answers only after the update is handled (DUP#2): the message stored and the reply sent, or, when handling fails,
+the apology tried. With the right secret the answer is always 200 `{}`, also when handling fails. An update the bot
+does not finish gets no answer, so Telegram sends it again and DUP#1 keeps it once: on SIGTERM, `serve` stops taking
+requests, gives the updates in flight up to 5 s, and cancels the rest unanswered. Replies are Bot API
+`sendMessage` calls, never the webhook's response body. The app never calls `setWebhook` itself.
+
+The log events (`event`): `server_started`, `server_stopping`, `server_stopped`; `start` (a /start answered);
+`inbox_saved` and `inbox_repeat` (with `kind`, `user_id`, `message_id`); `handler_error`, `apology_failed`,
+`update_invalid`, `update_failed` (all `ERROR`); `healthz_failed` (`WARNING`); `http_request` (aiohttp's access
+log); `log` (a library's line); and around them `migrate_started`, `migrate_finished`, `config_error`,
+`<command>_failed`, `uncaught_exception`, `unraisable_exception`.
 
 ## Layout
 
@@ -26,9 +40,9 @@ src/todobot/
   __main__.py     python -m todobot migrate | serve
   config.py       environment variables, version fallback
   logs.py         JSON lines on stdout
-  web.py          aiohttp app: webhook (aiogram) and /healthz
-  bot.py          handlers: /start, inbox, errors
-  inbox.py        message kind and storing it
+  web.py          aiohttp app: the webhook (answers once the update is handled) and /healthz
+  bot.py          aiogram dispatcher and handlers: /start, inbox, errors
+  inbox.py        message kind, and storing it once per message
   texts.py        what the bot says (exact, from the requirement)
   db.py, schema.py, migrate.py, migrations/    SQLAlchemy (async, asyncpg) and Alembic
 tests/unit/       our tests (real Postgres, no database mocks)
