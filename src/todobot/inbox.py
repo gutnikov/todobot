@@ -1,4 +1,4 @@
-"""Taking in a message (SK-2): what kind it is, and storing it in the sender's inbox."""
+"""Taking in a message (SK-2): what kind it is, and storing it in the sender's inbox once (DUP#1)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Literal
 
 from aiogram.types import Message
-from sqlalchemy import insert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -33,8 +32,18 @@ def classify(message: Message) -> InboxItem:
     return InboxItem(kind="other", text=message.caption, file_id=None)
 
 
-async def save(engine: AsyncEngine, user_id: int, item: InboxItem) -> None:
-    """One `inbox` row for the user, in one transaction; the user's row is created on their first message."""
+async def save(engine: AsyncEngine, user_id: int, message_id: int, item: InboxItem) -> bool:
+    """One `inbox` row for the user's message, in one transaction; the user's row is created on their first message.
+
+    The message is the user's private chat and its `message_id` (DUP#1). True when this stored it; False when it was
+    stored before (Telegram sent the same update again), and then nothing changes.
+    """
     async with engine.begin() as conn:
         await conn.execute(pg_insert(users).values(id=user_id).on_conflict_do_nothing(index_elements=[users.c.id]))
-        await conn.execute(insert(inbox).values(user_id=user_id, kind=item.kind, text=item.text, file_id=item.file_id))
+        stored = await conn.execute(
+            pg_insert(inbox)
+            .values(user_id=user_id, message_id=message_id, kind=item.kind, text=item.text, file_id=item.file_id)
+            .on_conflict_do_nothing(index_elements=[inbox.c.user_id, inbox.c.message_id])
+            .returning(inbox.c.message_id)
+        )
+        return stored.first() is not None

@@ -16,6 +16,7 @@ from sqlalchemy import (
     MetaData,
     Table,
     Text,
+    UniqueConstraint,
     func,
 )
 
@@ -37,7 +38,10 @@ users = Table(
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
 
-# Every message a user sent, as it came in. The columns are exactly the contract's (SK-2).
+# Every message a user sent, as it came in: the contract's columns (SK-2), and the message's identity (DUP#1).
+# A message is its chat and its `message_id`; the bot takes in private chats only, whose chat id is the user's id,
+# so (user_id, message_id) is the message. Telegram's repeat of an update finds it there and stores nothing.
+# Rows stored before DUP have no message_id (NULL); Postgres counts NULLs as distinct, so they never conflict.
 inbox = Table(
     "inbox",
     metadata,
@@ -46,6 +50,13 @@ inbox = Table(
     Column("text", Text, nullable=True),
     Column("file_id", Text, nullable=True),
     Column("received_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column(
+        "message_id",
+        BigInteger,
+        nullable=True,
+        comment="Telegram message_id in the user's private chat; NULL for rows stored before DUP",
+    ),
     CheckConstraint("kind IN ('text', 'voice', 'photo', 'other')", name="kind"),
     Index(None, "user_id", "received_at"),
+    UniqueConstraint("user_id", "message_id"),
 )

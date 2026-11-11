@@ -84,7 +84,7 @@ INVALID_UPDATES = {
 async def _post_only(database_url: str, body: Any) -> tuple[int, list[tuple[str, dict[str, str]]]]:
     async with running_app(database_url) as (client, api):
         response = await client.post(WEBHOOK_PATH, json=body, headers={HEADER: SECRET})
-    # Leaving running_app shut the app down, which waits for the updates it was still handling.
+    # The webhook answers once the update is handled (DUP#2): by the answer, anything it would call has been called.
     return response.status, api.calls
 
 
