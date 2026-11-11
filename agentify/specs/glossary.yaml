@@ -77,8 +77,8 @@ terms:
       message fails, that is a handler error (SK#4, SK#5)."
     not: [db, storage, datastore]
   - term: task
-    meaning: "Something a user wants done. The greeting asks for tasks, but SK only keeps messages in the inbox and
-      makes no tasks yet."
+    meaning: "Something a user wants done. Since CAP, a plain text message is recorded as one task, tied to its inbox
+      item; voice notes, photos and commands are not tasks (CAP#1)."
     not: [todo, ticket, job, issue]
   - term: message id
     meaning: "Telegram's message_id: unique within a chat. With the chat, it tells one message from another (DUP?2)."
@@ -107,3 +107,10 @@ terms:
     meaning: "A Telegram user the allow list does not name. They get «Извини, бот пока закрыт.» and nothing they send
       is kept (ACC#1)."
     not: [guest, outsider, intruder]
+
+  - term: status
+    meaning: "Where a task is in its life. CAP knows one: «записана» (recorded); the agent's work adds the others."
+    not: [stage, phase]
+  - term: task list
+    meaning: "The reply to /tasks: the sender's tasks, oldest first, each with its status (CAP#2)."
+    not: [agenda, todo list]
