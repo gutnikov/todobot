@@ -10,15 +10,19 @@ from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ChatType
-from aiogram.filters import CommandStart
+from aiogram.exceptions import TelegramAPIError
+from aiogram.filters import Command, CommandStart
 from aiogram.types import ErrorEvent, Message, TelegramObject, Update
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from todobot import inbox, texts
+from todobot import inbox, tasks, texts
 from todobot.logs import format_exception, log_event, redact
 
 logger = logging.getLogger(__name__)
+
+# CAP#2: the command that lists the sender's tasks.
+TASKS_COMMAND = "tasks"
 
 
 def build_bot(token: str, api_base: str) -> Bot:
@@ -145,6 +149,8 @@ def build_router(*, allowed_user_ids: frozenset[int] | None) -> Router:
     # note captioned "/start"; those are stored like any other (SK-2).
     # ignore_mention: in a private chat "/start@name" can only be for us, and checking the name would cost a getMe.
     router.message.register(on_start, F.text, CommandStart(ignore_mention=True))
+    # /tasks likewise (CAP#2); it is neither an inbox item nor a task, so it comes before on_message.
+    router.message.register(on_tasks, F.text, Command(TASKS_COMMAND, ignore_mention=True))
     router.message.register(on_message)
     router.errors.register(on_error)
     return router
@@ -156,11 +162,36 @@ async def on_start(message: Message) -> None:
     log_event(logger, "start", user_id=message.from_user.id if message.from_user else None)
 
 
+class TasksNotSentError(Exception):
+    """Sending the list of tasks failed. It says which message and why, never with the cause's traceback: the tasks are
+    what the user wrote, and the cause can quote them (aiogram's ClientDecodeError holds the Bot API's answer, which
+    echoes the text sent, and its pydantic error cuts that text short in the middle, where `redact` cannot find it).
+    """
+
+
+async def on_tasks(message: Message, engine: AsyncEngine) -> None:
+    """CAP#2: the sender's tasks, oldest first, in as many messages as the list needs; stored nowhere."""
+    if message.from_user is None:  # never in a private chat
+        return
+    user_id = message.from_user.id
+    listed = await tasks.of_user(engine, user_id)
+    replies = tasks.render(listed)
+    for number, reply in enumerate(replies, 1):
+        try:
+            await message.answer(reply)
+        except TelegramAPIError as exc:  # its text is the Bot API's description, which never quotes the text sent
+            raise TasksNotSentError(f"message {number} of {len(replies)}: {type(exc).__name__}: {exc}") from None
+        except Exception as exc:  # anything else may quote it (see TasksNotSentError): its type only
+            raise TasksNotSentError(f"message {number} of {len(replies)}: {type(exc).__name__}") from None
+    log_event(logger, "tasks_listed", user_id=user_id, tasks=len(listed), messages=len(replies))
+
+
 async def on_message(message: Message, engine: AsyncEngine) -> None:
-    """SK-2: any other message (other commands included) goes to the sender's inbox.
+    """SK-2: any other message (other commands included) goes to the sender's inbox; CAP#1: a plain text becomes a
+    task with it (`inbox.save`).
 
     DUP#1: Telegram's repeat of an update (the same chat and message_id) finds its message stored; it is kept once
-    and not replied to again.
+    and not replied to again, and makes no second task.
     """
     if message.from_user is None:  # never in a private chat; there would be no one to store it for
         return
@@ -170,6 +201,8 @@ async def on_message(message: Message, engine: AsyncEngine) -> None:
         log_event(logger, "inbox_repeat", kind=item.kind, user_id=user_id, message_id=message.message_id)
         return
     log_event(logger, "inbox_saved", kind=item.kind, user_id=user_id, message_id=message.message_id)
+    if item.task_text is not None:
+        log_event(logger, "task_recorded", user_id=user_id, message_id=message.message_id)
     await message.answer(texts.SAVED)
 
 

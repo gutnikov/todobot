@@ -12,6 +12,8 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
+    Identity,
     Index,
     MetaData,
     Table,
@@ -59,4 +61,22 @@ inbox = Table(
     CheckConstraint("kind IN ('text', 'voice', 'photo', 'other')", name="kind"),
     Index(None, "user_id", "received_at"),
     UniqueConstraint("user_id", "message_id"),
+)
+
+# A task (CAP#1): a plain text message (not a command) becomes one when its inbox item is stored, in the same
+# transaction, so Telegram's repeat of the update (DUP#1), which stores no item, makes no task either. Its inbox item
+# is (user_id, message_id), DUP#1's key, and one message is one task. Inbox items stored before CAP have no task.
+tasks = Table(
+    "tasks",
+    metadata,
+    Column("id", BigInteger, Identity(always=True), primary_key=True),
+    Column("user_id", BigInteger, nullable=False),
+    Column("message_id", BigInteger, nullable=False, comment="the inbox item it was made from: (user_id, message_id)"),
+    Column("text", Text, nullable=False),
+    Column("status", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    CheckConstraint("status IN ('recorded')", name="status"),
+    ForeignKeyConstraint(["user_id", "message_id"], ["inbox.user_id", "inbox.message_id"], ondelete="CASCADE"),
+    UniqueConstraint("user_id", "message_id"),
+    Index(None, "user_id", "created_at"),
 )

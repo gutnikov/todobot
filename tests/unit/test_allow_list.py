@@ -116,6 +116,7 @@ def _records(stdout: str, event: str) -> list[dict[str, Any]]:
     "content",
     [
         pytest.param({"text": "/start", "entities": [{"type": "bot_command", "offset": 0, "length": 6}]}, id="start"),
+        pytest.param({"text": "/tasks", "entities": [{"type": "bot_command", "offset": 0, "length": 6}]}, id="tasks"),
         pytest.param({"text": TEXT}, id="text"),
         pytest.param({"photo": PHOTO, "caption": CAPTION}, id="photo"),
         pytest.param({"location": {"latitude": 52.37, "longitude": 4.89}}, id="other"),
@@ -142,6 +143,8 @@ def test_a_stranger_gets_the_refusal_only_and_nothing_is_stored(
     }
     assert not _records(stdout, "start")
     assert not _records(stdout, "inbox_saved")
+    assert not _records(stdout, "task_recorded")
+    assert not _records(stdout, "tasks_listed")
     for marker in MARKERS:  # what the stranger wrote never reaches the logs
         assert marker not in stdout
 
