@@ -1,0 +1,35 @@
+# todobot's lifecycles (layer `state-machines` in agentify/specs/layers.yaml): for each key entity whose status
+# decides what a person may do, its statuses and, for every (status, command), a transition, an error, or
+# impossible. Each status is a value of a read model's `status` field in the event model, and each transition is a
+# slice there; the event model's examples pin them down. The check (agentify/loops/spec-check/checks.py lifecycles)
+# fails on a status no transition reaches, a status other than a final one with no way out, a (status, command) left
+# undecided, and a transition or an error the event model does not have.
+#
+# SK has no entity with a status: the inbox keeps messages and nothing changes them. The task lifecycle comes with
+# the requirement that brings tasks.
+#
+# The format, for one entity:
+#
+#   Task:
+#     field: TaskList.status            # <ReadModel>.<field> in the event model; its values are the statuses
+#     initial: new                      # the status an entity starts in
+#     statuses: [new, planned, done]
+#     final: [done]                     # statuses with no way out on purpose
+#     commands:                         # every command that acts on the entity, and what it does in each status
+#       PlanTask:
+#         new: {to: planned, slice: S10}     # a transition: the slice whose command it is
+#         planned: {error: AlreadyPlanned}   # refused: an error in that slice's `errors`
+#         done: impossible                   # the person cannot issue it there (no button, no command)
+
+lifecycles:
+  Door:
+    field: Door.status
+    initial: open
+    statuses: [open, closed]
+    final: []
+    commands:
+      CloseDoor:
+        open: {to: closed, slice: D01}
+        closed: {error: AlreadyClosed}
+      OpenDoor:
+        closed: {to: open, slice: D02}

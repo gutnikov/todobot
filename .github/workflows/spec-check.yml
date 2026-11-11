@@ -1,0 +1,36 @@
+# The spec check (agentify/loops/spec-check/LOOP.md): specs.py check and every layer's check from
+# agentify/specs/layers.yaml. It runs on every pull request, not only those that touch the spec: it is a required
+# check of main, and a required check that a path filter skips would never report.
+name: spec-check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  spec-check:
+    name: spec-check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # agentify's specs.py and em.py, at the version the loop is validated with (github.com/gutnikov/agentify, public).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: gutnikov/agentify
+          ref: eaff32755c6b48a6ee391651bca306cbbec7ec91 # agentify 0.4.0
+          path: .agentify-plugin
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.10.11"
+          python-version: "3.12"
+      - run: agentify/loops/spec-check/run .
+        env:
+          AGENTIFY_ROOT: .agentify-plugin

@@ -13,3 +13,10 @@
   synthetic run counts. Validated again.
 - 2026-11-10: the first real run (merge of PR #2, ba8938c) waited 30 min for a deployment that never came: the service had no deploy trigger. Deploy wait 30 → 10 min; the no-deployment hint names the trigger; new must-fire case `no-deployment` from that run. Validated again.
 - 2026-11-10: the workflow's paths drop `railway.json`: the service's settings moved to `.railway/railway.ts` and Railway's watch paths no longer list it. No change to collect or run.
+- 2026-11-11: `collect` takes the signals of the spec part's requirement files from `specs.py signals --base
+  <previous sha>` (agentify 0.4.0), run in a temporary worktree of the released commit, when the release changes
+  `agentify/specs/`; skeleton.md and other markdown files keep their `prod:` lines. A signal's `min` above
+  `--min-events` raises it for all. `run` is unchanged. The workflow checks agentify out (public since 2026-11-11)
+  and runs `collect` through uv with PyYAML. New must-pass case `caba438-signals-from-spec`.
+  Validated again: 10 cases.
+- 2026-11-11: active: wired on main with the merge of task:specs-setup.

@@ -1,0 +1,51 @@
+# A made-up entity for the state-machines check's cases: not todobot's spec. A door is open or closed.
+screens:
+  DoorPanel: {route: "made up for the cases", pom: doorPanel}
+
+states:
+  openDoor: {given: [], note: "a door that is open"}
+  closedDoor: {extends: openDoor, given: [DoorClosed], note: "the same door, closed"}
+
+slices:
+  - id: D01
+    name: Close the door
+    type: command
+    actor: User
+    screen: DoorPanel
+    command: {name: CloseDoor, fields: {}}
+    errors: [AlreadyClosed]
+    events:
+      DoorClosed: {stream: Door, fields: {}}
+    specs:
+      - name: an open door closes
+        given: openDoor
+        then: {events: [DoorClosed], see: [{screen: DoorPanel, field: Door.status, is: closed}]}
+      - name: a closed door does not close again
+        given: closedDoor
+        then: {error: AlreadyClosed}
+
+  - id: D02
+    name: Open the door
+    type: command
+    actor: User
+    screen: DoorPanel
+    command: {name: OpenDoor, fields: {}}
+    errors: [AlreadyOpen]
+    events:
+      DoorOpened: {stream: Door, fields: {}}
+    specs:
+      - name: a closed door opens
+        given: closedDoor
+        then: {events: [DoorOpened], see: [{screen: DoorPanel, field: Door.status, is: open}]}
+      - name: an open door does not open again
+        given: openDoor
+        then: {error: AlreadyOpen}
+
+  - id: D03
+    name: The door
+    type: view
+    read_model:
+      name: Door
+      fields:
+        status: [DoorClosed, DoorOpened]
+    screens: [DoorPanel]

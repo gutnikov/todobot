@@ -1,0 +1,42 @@
+# The spec layers this project keeps: one spine, other layers only for a named risk.
+# Statuses: proposed | set-up | validated | active | retired.
+#
+# Chosen by the owner (hitl-log: H4, task:specs-setup, 2026-11-11) for the risks in the spec block of
+# agentify/map.yaml: integrations, timers, rules-and-statuses, permissions.
+#
+# In a check command, `<agentify>` is the agentify plugin's folder, version 0.4.0 (commit eaff327), and
+# `<spec-check>` is agentify/loops/spec-check, which holds the project's own checks. `python3` needs PyYAML.
+# agentify/loops/spec-check/run fills both in and runs every check below, after `specs.py check`.
+
+layers:
+  - id: model
+    type: event-model
+    path: agentify/specs/model/
+    status: validated
+    why: "spine: every behaviour as an example a test can be derived from; the outside systems (Telegram, the
+      database, later Google Calendar and the LLM) with their outcomes, for the integrations risk"
+    check: "python3 <agentify>/parts/event-model/scripts/em.py check --strict agentify/specs/model/"
+    loop: spec-check
+  - id: glossary
+    type: glossary
+    path: agentify/specs/glossary.yaml
+    status: validated
+    why: "one name per thing: tests, fixtures and the bot's texts reuse the names"
+    check: "python3 <spec-check>/checks.py glossary agentify/specs/glossary.yaml agentify/specs/model/"
+    loop: spec-check
+  - id: rules
+    type: decision-tables
+    path: agentify/specs/model/
+    status: validated
+    why: "rules-and-statuses and permissions: priorities and scheduling rules, and who may reach each user's data
+      and Google account, as complete tables in the spine's `rules:`; a combination nobody decided is a question"
+    check: "python3 <spec-check>/checks.py tables agentify/specs/model/"
+    loop: spec-check
+  - id: lifecycles
+    type: state-machines
+    path: agentify/specs/lifecycles.yaml
+    status: validated
+    why: "rules-and-statuses and timers: the task lifecycle, every status reachable and none a dead end, every
+      (status, command) decided"
+    check: "python3 <spec-check>/checks.py lifecycles agentify/specs/lifecycles.yaml agentify/specs/model/"
+    loop: spec-check

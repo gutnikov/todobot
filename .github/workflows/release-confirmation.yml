@@ -44,6 +44,23 @@ jobs:
         with:
           fetch-depth: 0  # collect diffs the requirements between the previous version's commit and this one
 
+      # agentify's specs.py, at the version collect is validated with: it gives the signals of a release that
+      # changes agentify/specs/ (github.com/gutnikov/agentify, public). If this checkout fails, collect still confirms
+      # every release that leaves agentify/specs/ alone, and fails one that changes it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        continue-on-error: true
+        with:
+          repository: gutnikov/agentify
+          ref: eaff32755c6b48a6ee391651bca306cbbec7ec91 # agentify 0.4.0
+          path: .agentify-plugin
+          persist-credentials: false
+
+      # Python 3.12 with PyYAML for specs.py, beside the project, not in it.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.10.11"
+          python-version: "3.12"
+
       - name: Install the railway CLI 5.71.0
         shell: bash
         run: |
@@ -55,10 +72,13 @@ jobs:
 
       - name: collect
         shell: bash
+        env:
+          AGENTIFY_ROOT: .agentify-plugin
         run: |
           window=()
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then window=(--window-start "$RUN_START"); fi
-          "$LOOP/collect" --sha "$SHA" --out snapshot "${window[@]}"
+          uv run --quiet --no-project --python 3.12 --with pyyaml==6.0.3 \
+            python "$LOOP/collect" --sha "$SHA" --out snapshot "${window[@]}"
 
       - name: run
         shell: bash

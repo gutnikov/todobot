@@ -1,0 +1,399 @@
+# todobot — Event Model: the skeleton (SK). What agentify/specs/requirements/SK.yaml says, and nothing more.
+# Format: agentify's parts/event-model/format.md. Checks: the layers in agentify/specs/layers.yaml.
+#
+# Screens are where a person or a test sees a result: the user's chat with the bot, the inbox as the tests read it
+# (SK#2's seam, the table inbox), GET /healthz, and the log (stdout of `serve`; Railway's logs in production).
+# <APP_VERSION> stands for the version the bot runs with: the tests set it.
+#
+# A decision table in `rules:` decides every combination of its inputs' domains. A combination nobody decided yet
+# is listed under the table's `undecided: [{inputs: [...], question: "..."}]`, never given a value.
+#
+# Tests are tagged and titled with an example: `test_<tag>_<example name>`, where <tag> is the slice id (s02) or one
+# of the example's requirements (sk2), and the name is the example's in lower case with every run of other
+# characters as one `_`. The acceptance gate matches them that way (agentify/loops/acceptance-gate/LOOP.md).
+
+system: todobot
+actors: [User, Operator]
+externals:
+  # outcome -> the e2e fixture that forces it
+  Database:
+    outcomes:
+      answers: migratedDatabase          # a fresh database, migrated
+      doesNotAnswer: closedPortDatabase  # DATABASE_URL points to a port nothing listens on
+      storingFails: unmigratedDatabase   # a fresh database where migrate has not run: SK#5's trigger
+clock: false
+
+screens:
+  Chat: {route: "the user's private chat with the bot: the Bot API's sendMessage calls to it", pom: chat}
+  Inbox: {route: "the table inbox, read by the tests (SK#2)", pom: inbox}
+  Healthz: {route: "GET /healthz", pom: healthz}
+  Log: {route: "stdout of `serve`, one line per log line; Railway's logs in production", pom: log}
+
+states:
+  runningBot:
+    given: []
+    note: "`serve` runs with APP_VERSION set; the fake Bot API answers every call; nobody has written yet. The
+      database is the example's Database outcome. The user is Анна, Telegram id 5812345678, unless the state says
+      otherwise."
+  borisSavedAMessage:
+    extends: runningBot
+    given: [InboxSaved]
+    note: "Борис, Telegram id 402117993, sent the text «Забрать посылку»: one inbox item, under his id."
+  afterHandlerError:
+    extends: runningBot
+    given: [HandlerFailed]
+    note: "The database was not migrated (Database: storingFails). Анна sent «Купить молоко и хлеб», storing it
+      failed and she got the apology. The next message comes from Борис, Telegram id 402117993."
+
+domains:
+  MessageHas: [text, voice, photo, anything else]
+  Outcome: [started, saved, failed]
+  DatabaseCheck: [answers, does not answer]
+
+rules:
+  inbox-item:
+    kind: table
+    inputs: [MessageHas]
+    output: "the inbox item's kind, text and file_id"
+    reqs: [SK#2]
+    rows:
+      - [text, {kind: text, text: "the text", file_id: "NULL"}]
+      - [voice, {kind: voice, text: "the caption or NULL", file_id: "voice.file_id"}]
+      - [photo, {kind: photo, text: "the caption or NULL", file_id: "file_id of the largest PhotoSize (the last in the array)"}]
+      - [anything else, {kind: other, text: "the caption or NULL", file_id: "NULL"}]
+  reply:
+    kind: table
+    inputs: [Outcome]
+    output: "the text the bot sends to the chat, exactly"
+    reqs: [SK#1, SK#2, SK#5]
+    rows:
+      - [started, "Привет! Присылай задачи текстом, голосом или картинкой — я их сохраню."]
+      - [saved, "Сохранил ✅"]
+      - [failed, "Что-то пошло не так, попробуй ещё раз."]
+  health:
+    kind: table
+    inputs: [DatabaseCheck]
+    output: "the HTTP status and the JSON body of GET /healthz"
+    reqs: [SK#4]
+    rows:
+      - [answers, {status: 200, body: {status: ok, version: "<APP_VERSION>"}}]
+      - [does not answer, {status: 503, body: {status: error}, note: "more fields allowed"}]
+
+slices:
+  # ---------------------------------------------------------------- the user's side: /start, messages, the inbox
+  - id: S01
+    name: Start the bot
+    type: command
+    actor: User
+    screen: Chat
+    reqs: [SK#1]
+    rules: [reply]
+    command:
+      name: SendStart
+      fields: {user_id: system}
+    errors: []
+    events:
+      Started:
+        stream: User
+        fields: {user_id: cmd}
+    specs:
+      - name: /start replies with greeting within 5 seconds
+        given: runningBot
+        covers: [rule:reply/started]
+        then:
+          events: [Started]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Привет! Присылай задачи текстом, голосом или картинкой — я их сохраню.", within_seconds: 5}
+            - {screen: Chat, field: Reply.chat, is: "Анна's chat, 5812345678"}
+      - name: /start writes start log line with version
+        given: runningBot
+        then:
+          events: [Started]
+          see:
+            - {screen: Log, field: LogLine.event, is: start}
+            - {screen: Log, field: LogLine.version, is: "<APP_VERSION>"}
+    questions:
+      - "(SK?3) Can /start fail in a way a test can force? SK#5's apology covers every handler, but SK names a trigger only for storing a message, and /start stores nothing."
+      - "(SK?6) What does the bot do when Telegram refuses or fails a reply (sendMessage)? SK does not say; the tests' fake Bot API always answers ok."
+      - "(SK?7) Updates outside a private chat (a group, a channel) and edited messages: SK covers private chats only, and the bot leaves the others unhandled today. Specify them, or keep them out of scope?"
+
+  - id: V01
+    name: The chat
+    type: view
+    reqs: [SK#1, SK#2, SK#5]
+    read_model:
+      name: Reply
+      fields:
+        chat: [Started.user_id, InboxSaved.user_id, HandlerFailed.user_id]
+        text: [rule:reply]
+    screens: [Chat]
+
+  - id: S02
+    name: Send a message
+    type: command
+    actor: User
+    screen: Chat
+    # No slice-level reqs: its examples serve SK#2 or SK#5, and each says which.
+    rules: [inbox-item, reply]
+    command:
+      name: SendMessage
+      fields: {user_id: system, content: input, text: input, caption: input}
+    errors: []
+    events:
+      InboxSaved:
+        stream: Inbox
+        fields: {user_id: cmd, kind: "rule:inbox-item", text: "rule:inbox-item", file_id: "rule:inbox-item", received_at: system}
+      HandlerFailed:
+        stream: Update
+        fields: {user_id: cmd}
+    specs:
+      - name: text message is saved as text and acknowledged
+        given: runningBot
+        when: {content: text, text: "Купить молоко и хлеб"}
+        external: {Database: answers}
+        covers: [rule:inbox-item/text, rule:reply/saved]
+        reqs: [SK#2]
+        then:
+          events: [InboxSaved]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Сохранил ✅"}
+            - {screen: Chat, field: Reply.chat, is: "Анна's chat, 5812345678"}
+            - {screen: Inbox, field: InboxItem.user_id, is: 5812345678}
+            - {screen: Inbox, field: InboxItem.kind, is: text}
+            - {screen: Inbox, field: InboxItem.text, is: "Купить молоко и хлеб"}
+            - {screen: Inbox, field: InboxItem.file_id, is: "NULL"}
+            - {screen: Inbox, field: InboxItem.received_at, is: "the time the message came, with a time zone: the server's time or the message's date"}
+      - name: other command is saved as text
+        given: runningBot
+        when: {content: text, text: "/help"}
+        external: {Database: answers}
+        covers: [rule:inbox-item/text]
+        reqs: [SK#9]
+        then:
+          events: [InboxSaved]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Сохранил ✅"}
+            - {screen: Inbox, field: InboxItem.kind, is: text}
+            - {screen: Inbox, field: InboxItem.text, is: "/help"}
+            - {screen: Inbox, field: InboxItem.file_id, is: "NULL"}
+      - name: voice without caption is saved with its file id
+        given: runningBot
+        when: {content: voice}
+        external: {Database: answers}
+        covers: [rule:inbox-item/voice]
+        reqs: [SK#2]
+        then:
+          events: [InboxSaved]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Сохранил ✅"}
+            - {screen: Inbox, field: InboxItem.kind, is: voice}
+            - {screen: Inbox, field: InboxItem.text, is: "NULL"}
+            - {screen: Inbox, field: InboxItem.file_id, is: "the voice note's file_id"}
+      - name: voice with caption is saved with the caption
+        given: runningBot
+        when: {content: voice, caption: "Позвонить маме вечером"}
+        external: {Database: answers}
+        covers: [rule:inbox-item/voice]
+        reqs: [SK#2]
+        then:
+          events: [InboxSaved]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Сохранил ✅"}
+            - {screen: Inbox, field: InboxItem.kind, is: voice}
+            - {screen: Inbox, field: InboxItem.text, is: "Позвонить маме вечером"}
+            - {screen: Inbox, field: InboxItem.file_id, is: "the voice note's file_id"}
+      - name: photo is saved with file id of the last photo size
+        given: runningBot
+        when: {content: photo, caption: "Чек из аптеки — вернуть до пятницы"}
+        external: {Database: answers}
+        covers: [rule:inbox-item/photo]
+        reqs: [SK#2]
+        then:
+          events: [InboxSaved]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Сохранил ✅"}
+            - {screen: Inbox, field: InboxItem.kind, is: photo}
+            - {screen: Inbox, field: InboxItem.text, is: "Чек из аптеки — вернуть до пятницы"}
+            - {screen: Inbox, field: InboxItem.file_id, is: "the file_id of the photo's largest size, the last in its array"}
+      - name: photo without caption is saved with null text
+        given: runningBot
+        when: {content: photo}
+        external: {Database: answers}
+        covers: [rule:inbox-item/photo]
+        reqs: [SK#2]
+        then:
+          events: [InboxSaved]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Сохранил ✅"}
+            - {screen: Inbox, field: InboxItem.kind, is: photo}
+            - {screen: Inbox, field: InboxItem.text, is: "NULL"}
+      - name: sticker is saved as other without text or file id
+        given: runningBot
+        when: {content: sticker}
+        external: {Database: answers}
+        covers: [rule:inbox-item/anything else]
+        reqs: [SK#2]
+        then:
+          events: [InboxSaved]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Сохранил ✅"}
+            - {screen: Inbox, field: InboxItem.kind, is: other}
+            - {screen: Inbox, field: InboxItem.text, is: "NULL"}
+            - {screen: Inbox, field: InboxItem.file_id, is: "NULL"}
+      - name: document with caption is saved as other with the caption
+        given: runningBot
+        when: {content: document, caption: "Список на выходные"}
+        external: {Database: answers}
+        covers: [rule:inbox-item/anything else]
+        reqs: [SK#2]
+        then:
+          events: [InboxSaved]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Сохранил ✅"}
+            - {screen: Inbox, field: InboxItem.kind, is: other}
+            - {screen: Inbox, field: InboxItem.text, is: "Список на выходные"}
+            - {screen: Inbox, field: InboxItem.file_id, is: "NULL"}
+      - name: messages of two users are stored under their own user id
+        given: borisSavedAMessage
+        when: {content: text, text: "Записаться к стоматологу"}
+        external: {Database: answers}
+        reqs: [SK#2]
+        then:
+          events: [InboxSaved]
+          see:
+            - {screen: Chat, field: Reply.chat, is: "Анна's chat, 5812345678, not Борис's"}
+            - {screen: Inbox, field: InboxItem.user_id, is: "5812345678 for «Записаться к стоматологу», 402117993 for «Забрать посылку»"}
+      - name: inbox_saved log line has kind and version
+        given: runningBot
+        when: {content: photo}
+        external: {Database: answers}
+        reqs: [SK#2]
+        then:
+          events: [InboxSaved]
+          see:
+            - {screen: Log, field: LogLine.event, is: inbox_saved}
+            - {screen: Log, field: LogLine.kind, is: photo}
+            - {screen: Log, field: LogLine.version, is: "<APP_VERSION>"}
+      - name: every stdout line is JSON with level, event, version
+        given: runningBot
+        when: {content: text, text: "Купить молоко и хлеб"}
+        external: {Database: answers}
+        reqs: [SK#5]
+        then:
+          events: [InboxSaved]
+          see:
+            - {screen: Log, field: LogLine.format, is: "one JSON object on every line of stdout"}
+            - {screen: Log, field: LogLine.level, is: "present on every line"}
+            - {screen: Log, field: LogLine.event, is: "present on every line"}
+            - {screen: Log, field: LogLine.version, is: "<APP_VERSION> on every line"}
+      - name: handler error writes error line and sends apology
+        given: runningBot
+        when: {content: text, text: "Купить молоко и хлеб"}
+        external: {Database: storingFails}
+        covers: [rule:reply/failed]
+        reqs: [SK#5]
+        then:
+          events: [HandlerFailed]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Что-то пошло не так, попробуй ещё раз."}
+            - {screen: Log, field: LogLine.level, is: ERROR}
+            - {screen: Log, field: LogLine.event, is: handler_error}
+            - {screen: Log, field: LogLine.version, is: "<APP_VERSION>"}
+      - name: stdout stays JSON lines when a handler fails
+        given: runningBot
+        when: {content: text, text: "Купить молоко и хлеб"}
+        external: {Database: storingFails}
+        reqs: [SK#5]
+        then:
+          events: [HandlerFailed]
+          see:
+            - {screen: Log, field: LogLine.format, is: "one JSON object on every line of stdout"}
+            - {screen: Log, field: LogLine.version, is: "<APP_VERSION> on every line"}
+      - name: process keeps handling updates and /healthz after handler error
+        given: afterHandlerError
+        when: {content: text, text: "Забрать посылку"}
+        external: {Database: storingFails}
+        reqs: [SK#5]
+        then:
+          events: [HandlerFailed]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Что-то пошло не так, попробуй ещё раз."}
+            - {screen: Chat, field: Reply.chat, is: "Борис's chat, 402117993"}
+            - {screen: Healthz, field: Health.http_status, is: 200}
+            - {screen: Healthz, field: Health.status, is: ok}
+    questions:
+      - "(SK?4) Is there a deadline for «Сохранил ✅», as SK#1 gives 5 seconds for the greeting? None is given; the tests wait up to 10 s."
+      - "(SK?5) Telegram may deliver the same update twice (a webhook it retries): one inbox item or two?"
+
+  - id: V02
+    name: The inbox
+    type: view
+    reqs: [SK#2]
+    read_model:
+      name: InboxItem
+      fields:
+        user_id: [InboxSaved.user_id]
+        kind: [InboxSaved.kind]
+        text: [InboxSaved.text]
+        file_id: [InboxSaved.file_id]
+        received_at: [InboxSaved.received_at]
+    screens: [Inbox]
+
+  # ---------------------------------------------------------------- the operator's side: /healthz and the log
+  - id: S03
+    name: Ask for the bot's health
+    type: command
+    actor: Operator
+    screen: Healthz
+    reqs: [SK#4]
+    rules: [health]
+    command:
+      name: CheckHealth
+      fields: {}
+    errors: [DatabaseDoesNotAnswer]
+    events: {}
+    specs:
+      - name: /healthz returns ok and version when database answers
+        given: runningBot
+        external: {Database: answers}
+        covers: [rule:health/answers]
+        then:
+          see:
+            - {screen: Healthz, field: Health.http_status, is: 200}
+            - {screen: Healthz, field: Health.status, is: ok}
+            - {screen: Healthz, field: Health.version, is: "<APP_VERSION>"}
+      - name: server starts and /healthz returns 503 when database does not answer
+        given: runningBot
+        external: {Database: doesNotAnswer}
+        covers: [rule:health/does not answer]
+        then:
+          error: DatabaseDoesNotAnswer
+          see:
+            - {screen: Healthz, field: Health.http_status, is: 503}
+            - {screen: Healthz, field: Health.status, is: error}
+
+  - id: V03
+    name: Health
+    type: view
+    reqs: [SK#4]
+    read_model:
+      name: Health
+      fields:
+        http_status: [rule:health]
+        status: [rule:health]
+        version: [config]
+    screens: [Healthz]
+
+  - id: V04
+    name: The log
+    type: view
+    reqs: [SK#1, SK#2, SK#5]
+    read_model:
+      name: LogLine
+      fields:
+        format: [config]
+        level: [Started, InboxSaved, HandlerFailed]
+        event: [Started, InboxSaved, HandlerFailed]
+        version: [config]
+        kind: [InboxSaved.kind]
+    screens: [Log]

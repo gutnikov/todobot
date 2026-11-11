@@ -1,0 +1,82 @@
+# todobot's glossary (layer `glossary` in agentify/specs/layers.yaml): one name for each thing, in the product's own
+# words. The event model, the tests and their fixtures take their names from here. A name in the event model that
+# uses a word under `not` fails the layer's check (agentify/loops/spec-check/checks.py glossary).
+#
+# The terms are the skeleton's (SK). Each new requirement adds the terms it brings, from its own words.
+
+terms:
+  - term: user
+    meaning: "A Telegram user who writes to the bot in a private chat. Any Telegram user may use the bot, and each
+      user's data is theirs (SK?1)."
+    not: [client, customer, member, subscriber, account]
+  - term: chat
+    meaning: "The user's private Telegram chat with the bot, where the bot's replies arrive. The bot answers in
+      Russian (SK?2)."
+    not: [conversation, dialog, dialogue, thread, room]
+  - term: /start
+    meaning: "The command a user sends to begin; the bot answers it with the greeting (SK#1)."
+    not: [hello, onboarding]
+  - term: message
+    meaning: "One Telegram message a user sends to the bot in a private chat, other than /start. Other commands are
+      messages too (SK#2)."
+    not: [post, note, submission]
+  - term: kind
+    meaning: "What a message is, as the inbox keeps it: text, voice, photo or other (SK#2)."
+    not: [type, category, sort]
+  - term: caption
+    meaning: "The text a user writes with a voice note, a photo or anything else they send."
+    not: [description, subtitle, label]
+  - term: file id
+    meaning: "Telegram's file_id of a voice note, or of a photo's largest size: the last in its array (SK#2)."
+    not: [attachment, media, blob]
+  - term: inbox
+    meaning: "Everything users sent, one inbox item per message, each under the user who sent it. Nothing in it is
+      organised yet (SK#2)."
+    not: [backlog, queue, feed, mailbox]
+  - term: inbox item
+    meaning: "One message in the inbox: user_id, kind, text, file_id and received_at (SK#2)."
+    not: [entry, record, row]
+  - term: reply
+    meaning: "What the bot sends to the chat. Its exact texts are the rule `reply` of the event model (SK#1, SK#2,
+      SK#5)."
+    not: [response, notification]
+  - term: greeting
+    meaning: "The reply to /start (SK#1)."
+    not: [welcome, salutation]
+  - term: apology
+    meaning: "The reply when handling a message fails (SK#5)."
+    not: [excuse, regret]
+  - term: handler error
+    meaning: "An unhandled exception while the bot handles an update. It writes a log line with level ERROR and event
+      handler_error, the user gets the apology, and the bot goes on running (SK#5)."
+    not: [crash, exception, fault]
+  - term: update
+    meaning: "One Telegram Update the bot receives on its webhook, such as a message or /start."
+    not: [request, callback, delivery]
+  - term: health check
+    meaning: "GET /healthz: 200 with the version while the database answers SELECT 1, 503 when it does not (SK#4)."
+    not: [ping, heartbeat, liveness, readiness]
+  - term: version
+    meaning: "The release's version: APP_VERSION, else RAILWAY_GIT_COMMIT_SHA, else dev. It is in the health check
+      and on every log line (SK#4, SK#5)."
+    not: [build, revision]
+  - term: log line
+    meaning: "One JSON object on the stdout of `serve`, with at least level, event and version. Railway keeps them
+      in production (SK#5)."
+    not: [printout, trace]
+  - term: log event
+    meaning: "The `event` field of a log line, such as start, inbox_saved or handler_error. A release's confirmation
+      looks for the ones the requirements name in `prod`."
+    not: []
+  - term: operator
+    meaning: "Whoever runs the bot and asks for its health: Railway's healthcheck, the release's confirmation, the
+      owner (SK#4)."
+    not: [admin, administrator, devops]
+  - term: database
+    meaning: "The bot's Postgres, Neon in production. Whether it answers decides the health check; when storing a
+      message fails, that is a handler error (SK#4, SK#5)."
+    not: [db, storage, datastore]
+  - term: task
+    meaning: "Something a user wants done. The greeting asks for tasks, but SK only keeps messages in the inbox and
+      makes no tasks yet."
+    not: [todo, ticket, job, issue]

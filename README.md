@@ -1,7 +1,8 @@
 # todobot
 
 A Telegram bot that takes in tasks as text, voice or pictures. This is the skeleton
-(`agentify/specs/requirements/skeleton.md`): it keeps every message and does nothing else with it yet.
+(`agentify/specs/requirements/SK.yaml`, the spec in `agentify/specs/`): it keeps every message and does nothing
+else with it yet.
 
 What it does now:
 

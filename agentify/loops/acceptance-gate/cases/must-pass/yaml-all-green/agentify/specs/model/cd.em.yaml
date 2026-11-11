@@ -1,0 +1,36 @@
+# CD: the gate's own example of the YAML format. Tests are named for an example: test_<slice or requirement>_<name>.
+system: cd
+actors: [User]
+slices:
+  - id: S01
+    name: Add
+    type: command
+    actor: User
+    screen: Calculator
+    reqs: [CD#1]
+    command: {name: Add, fields: {a: input, b: input}}
+    errors: []
+    events: {Added: {stream: Sum, fields: {a: cmd, b: cmd}}}
+    specs:
+      - name: two and two make four
+        given: calculator
+        when: {a: 2, b: 2}
+        then: {see: [{screen: Calculator, field: Result.value, is: 4}]}
+  - id: S02
+    name: Subtract
+    type: command
+    actor: User
+    screen: Calculator
+    reqs: [CD#2]
+    command: {name: Subtract, fields: {a: input, b: input}}
+    errors: []
+    events: {Subtracted: {stream: Sum, fields: {a: cmd, b: cmd}}}
+    specs:
+      - name: four minus two is two
+        given: calculator
+        when: {a: 4, b: 2}
+        then: {see: [{screen: Calculator, field: Result.value, is: 2}]}
+      - name: two minus two is zero
+        given: calculator
+        when: {a: 2, b: 2}
+        then: {see: [{screen: Calculator, field: Result.value, is: 0}]}

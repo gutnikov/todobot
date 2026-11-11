@@ -1,7 +1,9 @@
 #!/bin/sh
-# acceptance-gate: one line per approved criterion, `<ID>-<n>: green | red | no test | changed without approval |
-# no red record`, and `<path>: not approved` for an acceptance file no approved requirement lists. See gate.py.
+# acceptance-gate: one line per approved criterion (`<ID>-<n>` of a markdown requirement, `<KEY>#<n>` of a YAML one),
+# `green | red | no test | no red record | no approver | changed without approval`, and `<path>: not approved` for an
+# acceptance file no approved requirement lists. See gate.py.
 # Contract: $1 is the directory to check (`--base REF`: also check that changes since REF were approved).
-# Exit 0 = passes, non-zero = fires. uv runs gate.py in this repository's environment, with its pytest.
+# Exit 0 = passes, non-zero = fires. uv runs gate.py in this repository's environment, with its pytest, plus
+# PyYAML 6.0.3 for the YAML requirement files and the event model (beside the project's dependencies, not in them).
 here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-exec uv run --quiet --locked --project "$here/../../.." python "$here/gate.py" "$@"
+exec uv run --quiet --locked --with pyyaml==6.0.3 --project "$here/../../.." python "$here/gate.py" "$@"
