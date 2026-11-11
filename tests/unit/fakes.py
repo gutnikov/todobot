@@ -83,28 +83,31 @@ class FakeBotApi:
             await self.called.wait()
 
 
-def app_settings(database_url: str, api_server: TestServer) -> Settings:
-    """What `serve` would get, with the Bot API at `api_server`."""
+def app_settings(
+    database_url: str, api_server: TestServer, *, allowed_user_ids: frozenset[int] | None = None
+) -> Settings:
+    """What `serve` would get, with the Bot API at `api_server`; open to every user unless `allowed_user_ids`."""
     return Settings(
         database_url=database_url,
         bot_token=TOKEN,
         webhook_secret=SECRET,
         api_base=str(api_server.make_url("")),
         version=VERSION,
+        allowed_user_ids=allowed_user_ids,
     )
 
 
 @asynccontextmanager
 async def running_app(
-    database_url: str, api: FakeBotApi | None = None
+    database_url: str, api: FakeBotApi | None = None, *, allowed_user_ids: frozenset[int] | None = None
 ) -> AsyncIterator[tuple[TestClient[Any, Any], FakeBotApi]]:
-    """The real app (`build_app`) on `database_url`, its Bot API calls going to `api` (a fresh FakeBotApi)."""
+    """The real app (`build_app`) on `database_url`, its Bot API calls going to `api` (a fresh FakeBotApi), serving
+    only `allowed_user_ids` when given (ACC)."""
     api = api or FakeBotApi()
-    async with (
-        TestServer(api.app) as api_server,
-        TestClient(TestServer(build_app(app_settings(database_url, api_server)))) as client,
-    ):
-        yield client, api
+    async with TestServer(api.app) as api_server:
+        settings = app_settings(database_url, api_server, allowed_user_ids=allowed_user_ids)
+        async with TestClient(TestServer(build_app(settings))) as client:
+            yield client, api
 
 
 @contextmanager

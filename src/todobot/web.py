@@ -118,7 +118,7 @@ def build_app(settings: Settings) -> web.Application:
     """The aiohttp app. Building and starting it touches neither the database nor the Bot API."""
     engine = create_engine(settings.database_url)
     bot = build_bot(settings.bot_token, settings.api_base)
-    dispatcher = build_dispatcher(engine)
+    dispatcher = build_dispatcher(engine, allowed_user_ids=settings.allowed_user_ids)
 
     app = web.Application()
     app[ENGINE] = engine
@@ -133,10 +133,24 @@ def build_app(settings: Settings) -> web.Application:
     return app
 
 
+def log_access(allowed_user_ids: frozenset[int] | None) -> None:
+    """ACC#2: which way `serve` runs. Open is a WARNING, never an ERROR: it goes to stdout only, not to PostHog."""
+    if allowed_user_ids is None:
+        log_event(
+            logger,
+            "access_open",
+            level=logging.WARNING,
+            detail="TELEGRAM_ALLOWED_USER_IDS is not set: every Telegram user is served",
+        )
+    else:
+        log_event(logger, "access_restricted", allowed=len(allowed_user_ids))
+
+
 async def serve(settings: Settings, *, on_started: Callable[[], None] | None = None) -> None:
     """Serve on 0.0.0.0:PORT until SIGTERM or SIGINT, then shut down gracefully.
 
-    `on_started` is called once the server listens (ERR#2: it tells PostHog).
+    Once the server listens, it says whether it serves the allow list only or every user (ACC#2), and `on_started` is
+    called (ERR#2: it tells PostHog).
 
     Shutting down, the server stops taking requests, waits up to SHUTDOWN_GRACE_SECONDS for the updates in flight to
     be handled and answered, cancels the rest (unanswered, Telegram sends them again), and then closes the Bot API
@@ -148,6 +162,7 @@ async def serve(settings: Settings, *, on_started: Callable[[], None] | None = N
         site = web.TCPSite(runner, host=HOST, port=settings.port)
         await site.start()
         log_event(logger, "server_started", host=HOST, port=settings.port)
+        log_access(settings.allowed_user_ids)
         if on_started is not None:
             on_started()
 
