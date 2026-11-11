@@ -71,7 +71,7 @@ def update_id_of(update: object) -> int | None:
 
 
 def _content(message: Message | None) -> tuple[str | None, ...]:
-    """What the user wrote in a message, and their ids: what is cut out of a traceback before it is logged.
+    """What the user wrote or sent in a message, and their ids: what is cut out of a traceback before it is logged.
 
     What users write must not reach the logs. Their ids may, as fields of our own lines, but not inside a traceback:
     a database error's DETAIL quotes the rejected row, the user's id first, and an ERROR line's traceback also goes
@@ -80,7 +80,8 @@ def _content(message: Message | None) -> tuple[str | None, ...]:
     if message is None:
         return ()
     ids = {str(message.chat.id), *([str(message.from_user.id)] if message.from_user else [])}
-    return (message.text, message.caption, *sorted(ids))
+    # The file_id the inbox keeps: with the bot's token it fetches the user's voice note or photo.
+    return (message.text, message.caption, inbox.classify(message).file_id, *sorted(ids))
 
 
 def build_dispatcher(engine: AsyncEngine) -> Dispatcher:

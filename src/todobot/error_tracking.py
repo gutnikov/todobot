@@ -68,9 +68,10 @@ class ErrorTracking:
         """ERR#2."""
         self._capture(STARTED_EVENT, {})
 
-    def report(self, line: Mapping[str, Any]) -> None:
-        """ERR#1: the log line `line` (a JSON line's fields) as one `$exception`."""
-        self._capture(EXCEPTION_EVENT, exception_properties(line))
+    def report(self, line: Mapping[str, Any], *, redacted: bool = True) -> None:
+        """ERR#1: the log line `line` (a JSON line's fields) as one `$exception`. `redacted`: its traceback is one our
+        code cut what users wrote out of; otherwise only the exceptions' classes and frames go."""
+        self._capture(EXCEPTION_EVENT, exception_properties(line, redacted=redacted))
 
     def close(self) -> None:
         """Send what is queued and stop the SDK's worker, waiting at most CLOSE_SECONDS; what is left then is dropped.
@@ -118,7 +119,9 @@ class PostHogHandler(logging.Handler):
             return
         self._local.busy = True
         try:
-            self.tracking.report(self._lines.fields(record))
+            # A traceback our code passed as the `exc` field was redacted (bot.py); one the formatter wrote from
+            # `exc_info` (a library's line, a crash hook's) was not, and its exceptions' messages may quote anything.
+            self.tracking.report(self._lines.fields(record), redacted=record.exc_info is None)
         except Exception as exc:  # a line that cannot go to PostHog must not become an error line itself
             log_event(logger, FAILED_EVENT, level=logging.WARNING, error=type(exc).__name__)
         finally:
@@ -172,9 +175,13 @@ _MARKERS = frozenset(" ^~")  # Python's lines that point at the failing part of 
 APP_PACKAGE = "todobot"
 
 
-def exception_properties(line: Mapping[str, Any]) -> dict[str, Any]:
+def exception_properties(line: Mapping[str, Any], *, redacted: bool = True) -> dict[str, Any]:
     """The `$exception` properties of a log line: its event, level and logger, its error class and its traceback as
-    the line has them, and PostHog's `$exception_list` made of them. Nothing else of the line goes."""
+    the line has them, and PostHog's `$exception_list` made of them. Nothing else of the line goes.
+
+    A traceback that was not `redacted` (the formatter wrote it from `exc_info`: a library's line, a crash hook's)
+    goes as its exceptions' classes and frames only: no exception's message, no `traceback` text.
+    """
     event = str(line.get("event", DEFAULT_EVENT))
     level = str(line.get("level", "ERROR"))
     logger_name = str(line.get("logger", ""))
@@ -187,6 +194,9 @@ def exception_properties(line: Mapping[str, Any]) -> dict[str, Any]:
     if not exceptions:  # a line without a traceback Python wrote: what the line says
         label = logger_name if event == DEFAULT_EVENT else event
         exceptions = [{"type": error_class or label, "value": error if error and not named else event}]
+    if not redacted:
+        for exception in exceptions:
+            exception["value"] = ""
     handled = level != "CRITICAL"  # CRITICAL: a crash hook's uncaught exception
     for number, exception in enumerate(exceptions):
         exception["mechanism"] = {"type": "chained" if number else "generic", "handled": handled, "synthetic": False}
@@ -200,7 +210,7 @@ def exception_properties(line: Mapping[str, Any]) -> dict[str, Any]:
     }
     if error_class:
         properties["error_class"] = error_class
-    if traceback_text:
+    if traceback_text and redacted:
         properties["traceback"] = traceback_text
     return properties
 

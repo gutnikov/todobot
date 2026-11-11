@@ -148,8 +148,9 @@ def test_an_error_line_goes_to_posthog_as_one_exception_made_of_the_line(capsys:
 
 def test_a_crash_hooks_line_is_a_fatal_unhandled_exception(capsys: pytest.CaptureFixture[str]) -> None:
     with FakePostHog() as posthog, logs_on_stdout(), errors_to_posthog(_settings(posthog), VERSION):
+        said = "QB" + "3-what the error said"  # built, so that the frame's source line does not show it
         try:
-            raise RuntimeError("boom")
+            raise RuntimeError(said)
         except RuntimeError as exc:  # as logs.setup_logging's excepthook logs it
             log_event(logging.getLogger("todobot.crash"), "uncaught_exception", level=logging.CRITICAL, exc_info=exc)
     (line,) = _records(capsys.readouterr().out)
@@ -160,10 +161,35 @@ def test_a_crash_hooks_line_is_a_fatal_unhandled_exception(capsys: pytest.Captur
     assert properties["log_event"] == "uncaught_exception"
     assert properties["$exception_level"] == "fatal"
     assert properties["error_class"] == "RuntimeError"
-    assert properties["traceback"] == line["exc"]
+    assert "Traceback" in line["exc"]
+    # A crash hook's traceback was never redacted: its classes and frames go, not its messages or its text.
+    assert "traceback" not in properties
     (exception,) = properties["$exception_list"]
-    assert (exception["type"], exception["value"]) == ("RuntimeError", "boom")
+    assert (exception["type"], exception["value"]) == ("RuntimeError", "")
+    assert exception["stacktrace"]["frames"]
     assert exception["mechanism"]["handled"] is False
+    assert "QB3" in line["exc"], "stdout keeps what it always had"
+    assert "QB3" not in json.dumps(event)
+
+
+def test_a_librarys_traceback_goes_without_its_messages(capsys: pytest.CaptureFixture[str]) -> None:
+    with FakePostHog() as posthog, logs_on_stdout(), errors_to_posthog(_settings(posthog), VERSION):
+        wrote = "QT" + "4-what a user wrote"  # built, so that the frames' source lines do not show it
+        try:
+            try:
+                raise KeyError(wrote)
+            except KeyError as inner:
+                raise ValueError(f"quoted again: {wrote}") from inner
+        except ValueError:
+            logging.getLogger("aiohttp.server").error("Error handling request QT4", exc_info=True)
+    (line,) = _records(capsys.readouterr().out)
+
+    (event,) = posthog.events
+    properties = event["properties"]
+    assert "QT4" in line["exc"], "stdout keeps what it always had"
+    assert "QT4" not in json.dumps(event)
+    assert "traceback" not in properties
+    assert [(e["type"], e["value"]) for e in properties["$exception_list"]] == [("ValueError", ""), ("KeyError", "")]
 
 
 @pytest.mark.parametrize(

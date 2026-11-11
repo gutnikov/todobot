@@ -25,9 +25,10 @@ USER = 333_333_333
 # 64 bytes Postgres keeps of a value in "Failing row contains (...)".
 TEXT = "QX7-тайна: первая строка, достаточно длинная, чтобы Postgres её обрезал\nQY8-тайна: вторая строка"
 CAPTION = "QZ9-подпись к фото, тоже секрет"
-MARKERS = ("QX7", "QY8", "QZ9")
+# The photo's file_id is the inbox's too: with the bot's token it fetches the photo.
+MARKERS = ("QX7", "QY8", "QZ9", "QW6")
 
-PHOTO = [{"file_id": "photo-x", "file_unique_id": "u-x", "width": 1280, "height": 960}]
+PHOTO = [{"file_id": "QW6-photo-file-id", "file_unique_id": "u-x", "width": 1280, "height": 960}]
 
 BREAKAGES = {
     # The INSERT fails with the text among its bound parameters.
