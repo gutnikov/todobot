@@ -6,6 +6,7 @@ import asyncio
 import logging
 import secrets
 import signal
+from collections.abc import Callable
 
 from aiogram import Bot, Dispatcher
 from aiogram.methods import TelegramMethod
@@ -132,8 +133,10 @@ def build_app(settings: Settings) -> web.Application:
     return app
 
 
-async def serve(settings: Settings) -> None:
+async def serve(settings: Settings, *, on_started: Callable[[], None] | None = None) -> None:
     """Serve on 0.0.0.0:PORT until SIGTERM or SIGINT, then shut down gracefully.
+
+    `on_started` is called once the server listens (ERR#2: it tells PostHog).
 
     Shutting down, the server stops taking requests, waits up to SHUTDOWN_GRACE_SECONDS for the updates in flight to
     be handled and answered, cancels the rest (unanswered, Telegram sends them again), and then closes the Bot API
@@ -145,6 +148,8 @@ async def serve(settings: Settings) -> None:
         site = web.TCPSite(runner, host=HOST, port=settings.port)
         await site.start()
         log_event(logger, "server_started", host=HOST, port=settings.port)
+        if on_started is not None:
+            on_started()
 
         stop = asyncio.Event()
         loop = asyncio.get_running_loop()

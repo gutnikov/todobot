@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 DEFAULT_API_BASE = "https://api.telegram.org"
 DEFAULT_PORT = 8080
 DEFAULT_VERSION = "dev"
+DEFAULT_POSTHOG_HOST = "https://eu.i.posthog.com"
 
 
 class ConfigError(Exception):
@@ -62,3 +63,20 @@ class Settings:
             port=_port(env),
             version=app_version(env),
         )
+
+
+@dataclass(frozen=True, kw_only=True)
+class PostHogSettings:
+    """Where `serve` sends its errors (ERR): PostHog's project token and ingestion host. The token stays out of repr."""
+
+    token: str = field(repr=False)
+    host: str = DEFAULT_POSTHOG_HOST
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str] | None = None) -> PostHogSettings | None:
+        """None without `POSTHOG_PROJECT_TOKEN` (or with an empty one): then `serve` sends PostHog nothing."""
+        env = os.environ if env is None else env
+        token = env.get("POSTHOG_PROJECT_TOKEN", "").strip()
+        if not token:
+            return None
+        return cls(token=token, host=env.get("POSTHOG_HOST") or DEFAULT_POSTHOG_HOST)

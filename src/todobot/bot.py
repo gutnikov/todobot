@@ -71,8 +71,16 @@ def update_id_of(update: object) -> int | None:
 
 
 def _content(message: Message | None) -> tuple[str | None, ...]:
-    """What the user wrote in a message: what must not reach the logs."""
-    return (message.text, message.caption) if message else ()
+    """What the user wrote in a message, and their ids: what is cut out of a traceback before it is logged.
+
+    What users write must not reach the logs. Their ids may, as fields of our own lines, but not inside a traceback:
+    a database error's DETAIL quotes the rejected row, the user's id first, and an ERROR line's traceback also goes
+    to PostHog, which gets no user id (ERR#1).
+    """
+    if message is None:
+        return ()
+    ids = {str(message.chat.id), *([str(message.from_user.id)] if message.from_user else [])}
+    return (message.text, message.caption, *sorted(ids))
 
 
 def build_dispatcher(engine: AsyncEngine) -> Dispatcher:
@@ -122,7 +130,7 @@ async def on_error(event: ErrorEvent, bot: Bot) -> None:
     """SK-5: any exception a handler raises is logged and apologised for; the update counts as handled.
 
     What users write stays out of the logs. The traceback can quote it: a database error's DETAIL shows the
-    rejected row. So the message's text and caption are cut out of it.
+    rejected row. So the message's text and caption, and the user's ids, are cut out of it (`_content`).
     """
     message = event.update.message
     log_event(

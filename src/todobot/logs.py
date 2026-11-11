@@ -65,6 +65,10 @@ class JsonFormatter(logging.Formatter):
         self.version = version
 
     def format(self, record: logging.LogRecord) -> str:
+        return json.dumps(self.fields(record), default=str)
+
+    def fields(self, record: logging.LogRecord) -> dict[str, Any]:
+        """The record's line as a dict: what `format` writes, before it becomes JSON."""
         message = record.getMessage()
         payload: dict[str, Any] = {
             "time": datetime.fromtimestamp(record.created, UTC).isoformat(timespec="milliseconds"),
@@ -74,7 +78,8 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
         }
         for key, value in vars(record).items():
-            if key not in _RECORD_ATTRS and key not in _OWN_KEYS:
+            # A library's private mark on a record (PostHog's SDK sets one) is not a field of the line.
+            if key not in _RECORD_ATTRS and key not in _OWN_KEYS and not key.startswith("_"):
                 payload[key] = value
         if message != payload["event"]:
             payload["message"] = message
@@ -82,7 +87,7 @@ class JsonFormatter(logging.Formatter):
             payload["exc"] = self.formatException(record.exc_info)
         if record.stack_info:
             payload["stack"] = self.formatStack(record.stack_info)
-        return json.dumps(payload, default=str)
+        return payload
 
 
 class _AccessEvent(logging.Filter):

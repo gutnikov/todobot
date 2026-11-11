@@ -1,15 +1,20 @@
-"""Shared by the unit tests: Telegram updates, a recording fake Bot API, and the app running in-process."""
+"""Shared by the unit tests: Telegram updates, a recording fake Bot API, a recording fake PostHog, and the app running
+in-process."""
 
 from __future__ import annotations
 
 import asyncio
 import gc
+import gzip
 import itertools
+import json
 import logging
 import sys
+import threading
 import time
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from aiohttp import web
@@ -117,3 +122,59 @@ def logs_on_stdout() -> Iterator[None]:
     finally:
         root.removeHandler(handler)
         root.setLevel(level)
+
+
+class FakePostHog:
+    """A local PostHog: records every request's body, and answers 200 (takes), 500 (`refuse=True`), or not at all
+    until the test is over (`hang=True`). The SDK posts from a thread of its own, so this one serves from a thread."""
+
+    def __init__(self, *, refuse: bool = False, hang: bool = False) -> None:
+        self.bodies: list[bytes] = []
+        self.statuses: list[int] = []
+        self._over = threading.Event()
+        posthog = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:
+                body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                if self.headers.get("Content-Encoding") == "gzip":
+                    body = gzip.decompress(body)
+                status = 500 if refuse else 200
+                posthog.bodies.append(body)
+                posthog.statuses.append(status)
+                if hang:
+                    posthog._over.wait(30)
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", "13")
+                self.end_headers()
+                self.wfile.write(b'{"status": 1}')
+
+            def log_message(self, *args: Any) -> None:  # not on stderr
+                pass
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._server.daemon_threads = True
+        self._thread = threading.Thread(
+            target=self._server.serve_forever, kwargs={"poll_interval": 0.05}, name="fake-posthog", daemon=True
+        )
+
+    @property
+    def url(self) -> str:
+        host, port = self._server.server_address[:2]
+        return f"http://{host!s}:{port}"
+
+    @property
+    def events(self) -> list[dict[str, Any]]:
+        """Every event of every request, in order (a body is a batch: `{"batch": [...]}`)."""
+        return [event for body in self.bodies for event in json.loads(body)["batch"]]
+
+    def __enter__(self) -> FakePostHog:
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._over.set()
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(timeout=5)

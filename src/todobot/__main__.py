@@ -7,9 +7,9 @@ import asyncio
 import logging
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
-from todobot.config import ConfigError, Settings, app_version, require
+from todobot.config import ConfigError, PostHogSettings, Settings, app_version, require
 from todobot.logs import log_event, setup_logging
 
 logger = logging.getLogger("todobot")
@@ -32,27 +32,42 @@ def _migrate() -> None:
     log_event(logger, "migrate_finished")
 
 
-def _serve() -> None:
+def _serve(on_started: Callable[[], None] | None = None) -> None:
     from todobot import web
 
-    asyncio.run(web.serve(Settings.from_env()))
+    asyncio.run(web.serve(Settings.from_env(), on_started=on_started))
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
-    setup_logging(app_version())
+def _run(command: str, run: Callable[[], None]) -> int:
+    """Run a command; its exit code. What escapes it is logged here, as the last resort."""
     try:
-        if args.command == "migrate":
-            _migrate()
-        else:
-            _serve()
+        run()
     except ConfigError as exc:
         log_event(logger, "config_error", level=logging.ERROR, error=str(exc))
         return 2
     except Exception as exc:
-        log_event(logger, f"{args.command}_failed", level=logging.ERROR, exc_info=exc)
+        log_event(logger, f"{command}_failed", level=logging.ERROR, exc_info=exc)
         return 1
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    version = app_version()
+    setup_logging(version)
+    if args.command == "migrate":
+        return _run(args.command, _migrate)
+
+    posthog_settings = PostHogSettings.from_env()
+    if posthog_settings is None:  # without POSTHOG_PROJECT_TOKEN, serve sends PostHog nothing
+        return _run(args.command, _serve)
+
+    from todobot.error_tracking import errors_to_posthog
+
+    # ERR: until serve exits, its config_error or serve_failed included, every ERROR or CRITICAL line also goes to
+    # PostHog; what is queued is sent on the way out.
+    with errors_to_posthog(posthog_settings, version) as tracking:
+        return _run(args.command, lambda: _serve(on_started=tracking.server_started))
 
 
 if __name__ == "__main__":
