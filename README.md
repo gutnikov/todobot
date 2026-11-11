@@ -2,7 +2,7 @@
 
 A Telegram bot that takes in tasks as text, voice or pictures. This is the skeleton
 (`agentify/specs/requirements/SK.yaml`, the spec in `agentify/specs/`) with one inbox item per message
-(`DUP.yaml`): it keeps every message once and does nothing else with it yet.
+(`DUP.yaml`) and its errors in PostHog (`ERR.yaml`): it keeps every message once and does nothing else with it yet.
 
 What it does now:
 
@@ -17,8 +17,10 @@ What it does now:
 - Every line on stdout is one JSON object with `level`, `event` and `version`. A handler that fails logs
   `event=handler_error`, apologises in the chat, and the server keeps running (SK-5). What users write stays out
   of the logs: database errors carry no parameters, the message's text and caption are cut out of the
-  `handler_error` traceback, and an update that does not validate (or a body that is not JSON) is one
-  `update_invalid` line with field locations and error types only.
+  `handler_error` traceback (with the user's ids: a rejected row's DETAIL quotes them), and an update that does
+  not validate (or a body that is not JSON) is one `update_invalid` line with field locations and error types only.
+- With `POSTHOG_PROJECT_TOKEN` set, every `ERROR` or `CRITICAL` line also goes to PostHog's error tracking, and each
+  start sends PostHog `server_started` (ERR); see [Errors in PostHog](#errors-in-posthog).
 
 Updates come in by webhook (`POST /telegram/webhook`, checked against `TELEGRAM_WEBHOOK_SECRET`). The webhook
 answers only after the update is handled (DUP#2): the message stored and the reply sent, or, when handling fails,
@@ -29,9 +31,9 @@ requests, gives the updates in flight up to 5 s, and cancels the rest unanswered
 
 The log events (`event`): `server_started`, `server_stopping`, `server_stopped`; `start` (a /start answered);
 `inbox_saved` and `inbox_repeat` (with `kind`, `user_id`, `message_id`); `handler_error`, `apology_failed`,
-`update_invalid`, `update_failed` (all `ERROR`); `healthz_failed` (`WARNING`); `http_request` (aiohttp's access
-log); `log` (a library's line); and around them `migrate_started`, `migrate_finished`, `config_error`,
-`<command>_failed`, `uncaught_exception`, `unraisable_exception`.
+`update_invalid`, `update_failed` (all `ERROR`); `healthz_failed` and `posthog_failed` (`WARNING`); `http_request`
+(aiohttp's access log); `log` (a library's line); and around them `migrate_started`, `migrate_finished`,
+`config_error`, `<command>_failed`, `uncaught_exception`, `unraisable_exception`.
 
 ## Layout
 
@@ -40,6 +42,7 @@ src/todobot/
   __main__.py     python -m todobot migrate | serve
   config.py       environment variables, version fallback
   logs.py         JSON lines on stdout
+  error_tracking.py  ERROR lines to PostHog as $exception, server_started (only with POSTHOG_PROJECT_TOKEN)
   web.py          aiohttp app: the webhook (answers once the update is handled) and /healthz
   bot.py          aiogram dispatcher and handlers: /start, inbox, errors
   inbox.py        message kind, and storing it once per message
@@ -95,6 +98,32 @@ The reply then goes to the Bot API at `TELEGRAM_API_BASE`.
 | `TELEGRAM_API_BASE` | the Bot API's base URL; calls go to `{base}/bot{token}/{method}` | `https://api.telegram.org` |
 | `PORT` | the HTTP port | `8080` |
 | `APP_VERSION` | the release's version, in `/healthz` and every log line | `RAILWAY_GIT_COMMIT_SHA`, else `dev` |
+| `POSTHOG_PROJECT_TOKEN` | the PostHog project's token (project 344747, organization todobot, EU); without it `serve` sends PostHog nothing | unset |
+| `POSTHOG_HOST` | PostHog's ingestion host | `https://eu.i.posthog.com` |
+
+## Errors in PostHog
+
+With `POSTHOG_PROJECT_TOKEN` set, `serve` sends PostHog (the official `posthog` SDK, from a background thread):
+
+- `server_started` once the server listens, with `version` (ERR#2). After a release, it shows the way to PostHog
+  works.
+- One `$exception` for every log line with level `ERROR` or `CRITICAL`, `config_error` and `serve_failed` included
+  (ERR#1). It is made from the log line, not from the live exception: `log_event`, `log_level`, `logger`,
+  `error_class`, `traceback` (the line's `exc`) and `version`, with PostHog's `$exception_list` (type, message,
+  frames) parsed from that traceback.
+
+Every event has `distinct_id` `todobot` and `$process_person_profile` false; GeoIP is off.
+
+What never goes to PostHog: what users write and their ids. Our own lines cut the message's text, caption and the
+user's ids out of a traceback before they log it, and PostHog gets that same traceback. The line's other fields
+(`message`, `update_id`, `user_id`, …), `INFO` and `WARNING` lines, and anything users do are not sent. Code
+variables are never captured, and the SDK's own exception autocapture is off. A crash hook's traceback
+(`uncaught_exception`) has no message to cut anything from: it goes as stdout has it.
+
+When PostHog does not take a batch (after 2 retries; 3 s per request), the bot goes on and writes a `WARNING` line
+`posthog_failed` (ERR#3). The SDK's own lines (`logger` `posthog`) never go above `WARNING` and never go back to
+PostHog. On SIGTERM, `serve` sends what is queued, waiting at most 3 s; what is left then is dropped, with a
+`posthog_failed` line.
 
 ## Deploying (Railway)
 
@@ -106,7 +135,7 @@ The reply then goes to the Bot API at `TELEGRAM_API_BASE`.
   requests whose required checks passed. Railway does not
   read the file on deploys. The `railway-config` workflow plans a change on its pull request and applies it after
   the merge. Locally, with Node 24: `npm ci --ignore-scripts && railway config plan`. The variables (bot token,
-  `DATABASE_URL`, webhook secret) live only in Railway.
+  `DATABASE_URL`, webhook secret, PostHog's project token) live only in Railway.
 
 The webhook is registered once, by hand, with the same secret:
 `https://api.telegram.org/bot<token>/setWebhook?url=https://<host>/telegram/webhook&secret_token=<secret>`.
