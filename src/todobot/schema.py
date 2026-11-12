@@ -66,6 +66,9 @@ inbox = Table(
 # A task (CAP#1): a plain text message (not a command) becomes one when its inbox item is stored, in the same
 # transaction, so Telegram's repeat of the update (DUP#1), which stores no item, makes no task either. Its inbox item
 # is (user_id, message_id), DUP#1's key, and one message is one task. Inbox items stored before CAP have no task.
+# TRL#3: its card in Trello, made by the background loop (`todobot.trello.sync`), never a second one: `card_id` once it
+# is made, and `card_requested_at` before each request, so a request whose outcome is unknown (a crash, a lost answer)
+# is looked for on the board before another is made.
 tasks = Table(
     "tasks",
     metadata,
@@ -75,8 +78,41 @@ tasks = Table(
     Column("text", Text, nullable=False),
     Column("status", Text, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("card_id", Text, nullable=True, comment="its Trello card (TRL#3); NULL until the card is made"),
+    Column(
+        "card_requested_at",
+        DateTime(timezone=True),
+        nullable=True,
+        comment="when Trello was last asked to make its card; set while card_id is NULL: a card may exist already",
+    ),
     CheckConstraint("status IN ('recorded')", name="status"),
     ForeignKeyConstraint(["user_id", "message_id"], ["inbox.user_id", "inbox.message_id"], ondelete="CASCADE"),
     UniqueConstraint("user_id", "message_id"),
+    UniqueConstraint("card_id"),
     Index(None, "user_id", "created_at"),
+)
+
+# TRL#1: a user's access to their own Trello. The access token and its secret are encrypted with APP_SECRET_KEY
+# (`todobot.crypto`); `/trello` again replaces the row. TRL#2: the board «todobot» and its list «Записана» once they
+# are set up; `list_id` NULL means the board is to be set up (again).
+trello_connections = Table(
+    "trello_connections",
+    metadata,
+    Column("user_id", BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, autoincrement=False),
+    Column("access", Text, nullable=False, comment="the Trello access token and its secret, encrypted (Fernet)"),
+    Column("board_id", Text, nullable=True, comment="the board «todobot»; NULL until it is found or made"),
+    Column("list_id", Text, nullable=True, comment="its list «Записана», where cards go; NULL: set the board up"),
+    Column("connected_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+
+# TRL#1: an OAuth request on its way: `/trello` got a request token from Trello and sent its link to the user. Trello's
+# callback brings the token back; it finds the user here (never from the callback's URL) once, before `expires_at`.
+trello_requests = Table(
+    "trello_requests",
+    metadata,
+    Column("token", Text, primary_key=True, comment="the OAuth request token Trello issued"),
+    Column("secret", Text, nullable=False, comment="the request token's secret, encrypted (Fernet)"),
+    Column("user_id", BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Index(None, "user_id"),
 )

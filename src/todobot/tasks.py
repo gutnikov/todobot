@@ -1,4 +1,5 @@
-"""Tasks (CAP): a plain text message becomes one (CAP#1), and `/tasks` lists the sender's (CAP#2)."""
+"""Tasks (CAP): a plain text message becomes one (CAP#1), and `/tasks` lists the sender's (CAP#2); with Trello connected
+the list's lines come from the board (TRL#4, `todobot.trello`), in the same form."""
 
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ MESSAGE_LIMIT = 4096
 class Task:
     text: str
     status: str
+    card_id: str | None = None  # its Trello card (TRL#3), once it is made
 
 
 async def record(conn: AsyncConnection, user_id: int, message_id: int, text: str) -> None:
@@ -34,24 +36,29 @@ async def of_user(engine: AsyncEngine, user_id: int) -> list[Task]:
     tasks = schema.tasks
     async with engine.connect() as conn:
         rows = await conn.execute(
-            select(tasks.c.text, tasks.c.status)
+            select(tasks.c.text, tasks.c.status, tasks.c.card_id)
             .where(tasks.c.user_id == user_id)
             .order_by(tasks.c.created_at, tasks.c.id)
         )
-        return [Task(text=row.text, status=row.status) for row in rows]
+        return [Task(text=row.text, status=row.status, card_id=row.card_id) for row in rows]
 
 
 def render(tasks: Sequence[Task], limit: int = MESSAGE_LIMIT) -> list[str]:
-    """CAP#2: the reply to /tasks, as the messages to send in order.
+    """CAP#2: the reply to /tasks, as the messages to send in order: each task's text and its status's label."""
+    return render_entries([(task.text, texts.STATUS_LABELS[task.status]) for task in tasks], limit)
 
-    The header and one line per task, `<n>. <text> — <label>`, split into messages between lines; or, with no task,
+
+def render_entries(entries: Sequence[tuple[str, str]], limit: int = MESSAGE_LIMIT) -> list[str]:
+    """The reply to /tasks for `entries`, (text, label) each, as the messages to send in order (CAP#2, TRL#4).
+
+    The header and one line per entry, `<n>. <text> — <label>`, split into messages between lines; or, with no entry,
     texts.NO_TASKS alone.
     """
-    if not tasks:
+    if not entries:
         return [texts.NO_TASKS]
     lines = [
-        texts.TASK_LINE.format(number=number, text=task.text, status=texts.STATUS_LABELS[task.status])
-        for number, task in enumerate(tasks, 1)
+        texts.TASK_LINE.format(number=number, text=text, status=label)
+        for number, (text, label) in enumerate(entries, 1)
     ]
     return split_messages([texts.TASKS_HEADER, *lines], limit)
 

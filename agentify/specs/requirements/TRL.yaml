@@ -85,6 +85,9 @@ seams: |
   - **Tests:** a fake Trello at `TRELLO_API_BASE` and `TRELLO_AUTH_BASE` serves the OAuth endpoints and the REST API
     the bot uses (boards, lists, cards), keeps its own state, and can refuse every call (500). Tests drive the OAuth
     callback as a browser would. `TRELLO_RETRY_SECONDS` may be set low.
+  - **Durations (TRL?5):** the `/trello` link lasts 30 minutes; each call to Trello waits at most 10 seconds; after a
+    failed or unknown card request, the bot looks on the board for a card it made in the last 10 minutes before
+    making another.
   - **Tags:** `test_trl1_…` … `test_trl4_…`, or the examples' names, in `tests/acceptance/`; earlier approved files
     are not changed.
 
@@ -116,3 +119,7 @@ questions:
     reason: H4
     text: "What does the bot do when Trello is down as a task comes in?"
     answer: "Reply «Сохранил ✅», keep the task in the database and try again once a minute until it reaches Trello; /tasks marks it «ещё не в Trello». Decided by the owner, 2026-11-11."
+  - id: TRL?5
+    reason: H1
+    text: "How long does the /trello link last, how long does a call to Trello wait, and how far back does the bot look for a card it may already have made?"
+    answer: "30 minutes, 10 seconds, 10 minutes. Decided by the owner, 2026-11-12."

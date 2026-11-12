@@ -12,22 +12,26 @@ import logging
 import sys
 import threading
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+import trello_fake
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from todobot.config import Settings
+from todobot.config import Settings, TrelloSettings
 from todobot.logs import JsonFormatter
-from todobot.web import build_app
+from todobot.web import AccessLog, build_app
 
 TOKEN = "123456789:unit-test-token"
 SECRET = "unit_webhook_secret_9f2c"
 HEADER = "X-Telegram-Bot-Api-Secret-Token"
 VERSION = "unit"
+# TRL: the bot's address as Trello's callback names it (the tests call the app's client instead), and a Fernet key.
+PUBLIC_BASE_URL = "https://bot.example"
+APP_SECRET_KEY = "dW5pdC10ZXN0cy1hcHAtc2VjcmV0LWtleS0zMmJ5dGU="
 
 _ids = itertools.count(1)
 
@@ -84,9 +88,14 @@ class FakeBotApi:
 
 
 def app_settings(
-    database_url: str, api_server: TestServer, *, allowed_user_ids: frozenset[int] | None = None
+    database_url: str,
+    api_server: TestServer,
+    *,
+    allowed_user_ids: frozenset[int] | None = None,
+    trello: TrelloSettings | None = None,
 ) -> Settings:
-    """What `serve` would get, with the Bot API at `api_server`; open to every user unless `allowed_user_ids`."""
+    """What `serve` would get, with the Bot API at `api_server`; open to every user unless `allowed_user_ids`; with
+    Trello only with `trello`."""
     return Settings(
         database_url=database_url,
         bot_token=TOKEN,
@@ -94,20 +103,55 @@ def app_settings(
         api_base=str(api_server.make_url("")),
         version=VERSION,
         allowed_user_ids=allowed_user_ids,
+        trello=trello,
+    )
+
+
+def trello_settings(trello_server: TestServer, *, retry_seconds: float = 3600.0) -> TrelloSettings:
+    """TRL's settings with Trello (OAuth and REST) at `trello_server`, a FakeTrello's. The loop's tick is long by
+    default: a round runs at start and when nudged."""
+    base = str(trello_server.make_url("")).rstrip("/")
+    return TrelloSettings(
+        api_key=trello_fake.KEY,
+        api_secret=trello_fake.SECRET,
+        public_base_url=PUBLIC_BASE_URL,
+        secret_key=APP_SECRET_KEY,
+        api_base=base,
+        auth_base=base,
+        retry_seconds=retry_seconds,
     )
 
 
 @asynccontextmanager
 async def running_app(
-    database_url: str, api: FakeBotApi | None = None, *, allowed_user_ids: frozenset[int] | None = None
+    database_url: str,
+    api: FakeBotApi | None = None,
+    *,
+    allowed_user_ids: frozenset[int] | None = None,
+    trello: TrelloSettings | None = None,
 ) -> AsyncIterator[tuple[TestClient[Any, Any], FakeBotApi]]:
     """The real app (`build_app`) on `database_url`, its Bot API calls going to `api` (a fresh FakeBotApi), serving
-    only `allowed_user_ids` when given (ACC)."""
+    only `allowed_user_ids` when given (ACC), with Trello when `trello` says where (TRL). Its access log is `serve`'s.
+    """
     api = api or FakeBotApi()
     async with TestServer(api.app) as api_server:
-        settings = app_settings(database_url, api_server, allowed_user_ids=allowed_user_ids)
-        async with TestClient(TestServer(build_app(settings))) as client:
+        settings = app_settings(database_url, api_server, allowed_user_ids=allowed_user_ids, trello=trello)
+        server = TestServer(build_app(settings))
+        await server.start_server(access_log_class=AccessLog)
+        async with TestClient(server) as client:
             yield client, api
+
+
+async def eventually[T](probe: Callable[[], T], seconds: float = 10.0) -> T:
+    """`probe()` once it is truthy; a TimeoutError after `seconds`. The fakes keep state, not events: this polls."""
+    deadline = time.monotonic() + seconds
+    for _ in itertools.count():
+        if value := probe():
+            return value
+        if time.monotonic() > deadline:
+            break
+        await asyncio.sleep(0.02)
+    raise TimeoutError(f"not within {seconds:g} s")
 
 
 @contextmanager
