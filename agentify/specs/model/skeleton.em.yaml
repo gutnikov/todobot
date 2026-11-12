@@ -1,4 +1,4 @@
-# todobot — Event Model: the skeleton (SK), and what later requirements add to it (DUP, ERR, ACC, CAP), each element tracing
+# todobot — Event Model: the skeleton (SK), and what later requirements add to it (DUP, ERR, ACC, CAP, TRL), each element tracing
 # to its requirement in `reqs`.
 # Format: agentify's parts/event-model/format.md. Checks: the layers in agentify/specs/layers.yaml.
 #
@@ -26,6 +26,11 @@ externals:
     outcomes:
       takes: fakePostHog                 # a fake PostHog at POSTHOG_HOST that records every request and takes it
       refuses: refusingPostHog           # a fake PostHog at POSTHOG_HOST that answers every request with 500
+  Trello:
+    outcomes:
+      takes: fakeTrello                  # a fake Trello (OAuth and REST) at TRELLO_AUTH_BASE / TRELLO_API_BASE
+      refuses: refusingTrello            # the fake Trello answering every REST call with 500
+      recovers: recoveringTrello         # the fake Trello refusing at first, then taking every call
 clock: false
 
 screens:
@@ -33,6 +38,8 @@ screens:
   Inbox: {route: "the table inbox, read by the tests (SK#2)", pom: inbox}
   Healthz: {route: "GET /healthz", pom: healthz}
   Log: {route: "stdout of `serve`, one line per log line; Railway's logs in production", pom: log}
+  TrelloBoard: {route: "the user's Trello board «todobot»: in tests the fake Trello's state (TRL)", pom: trelloBoard}
+  TrelloAuthPage: {route: "the page the browser shows at {PUBLIC_BASE_URL}/trello/callback (TRL#1)", pom: trelloAuthPage}
   TaskStore: {route: "the table tasks, read by the tests (CAP#1)", pom: taskStore}
   ErrorTracking: {route: "what PostHog receives: in tests the fake at POSTHOG_HOST; in production the project 344747 of the organization todobot (EU)", pom: posthog}
 
@@ -79,6 +86,37 @@ states:
     given: [TaskRecorded]
     note: "Анна recorded 40 tasks, each a text of 300 characters, so her list is longer than one Telegram message
       (4096 characters)."
+  runningBotWithTrello:
+    extends: runningBot
+    given: []
+    note: "serve runs with TRELLO_API_KEY, TRELLO_API_SECRET, PUBLIC_BASE_URL and APP_SECRET_KEY set and Trello at the
+      fake; Анна has not connected Trello. TRELLO_RETRY_SECONDS is low."
+  annaAskedForTrello:
+    extends: runningBotWithTrello
+    given: [TrelloLinkSent]
+    note: "Анна sent /trello and has the link; her browser opens it."
+  annaHasBoardWithTwoLists:
+    extends: annaAskedForTrello
+    given: []
+    note: "Анна's Trello already has a board «todobot» with the lists «Записана» and «Идеи» (her own) and nothing else."
+  annaConnectedTrello:
+    extends: runningBotWithTrello
+    given: [TrelloConnected, BoardReady]
+    note: "Анна connected Trello; her board «todobot» has the five lists and no cards."
+  annaConnectedTrelloUpdateComesAgain:
+    extends: annaConnectedTrello
+    given: [TaskRecorded, CardCreated]
+    note: "Анна's «Забрать посылку» was recorded and became a card; Telegram sends that same update again."
+  annaRecordedTaskBeforeTrello:
+    extends: runningBotWithTrello
+    given: [TaskRecorded]
+    note: "Анна recorded «Сделать поверку счётчиков» before connecting Trello: the task has no card yet."
+  annaCardsChangedInTrello:
+    extends: annaConnectedTrello
+    given: [TaskRecorded, CardCreated, TaskRecorded, CardCreated, TaskRecorded, CardCreated]
+    note: "Анна recorded «Сделать поверку счётчиков», «Записаться к стоматологу» and «Купить шины», each a card. In
+      Trello she then moved the first card to «Исследуется», renamed the second «Стоматолог: чистка и восьмёрки» and
+      archived the third."
   annaHitAHandlerError:
     extends: runningBotWithErrorTracking
     given: [HandlerFailed]
@@ -94,6 +132,7 @@ domains:
   MessageHas: [text, voice, photo, anything else]
   Outcome: [started, saved, failed, refused]
   MessageIs: [plain text, command, voice, photo, anything else]
+  TaskStatus: [recorded, researching, waiting for answers, planned, done]
   DatabaseCheck: [answers, does not answer]
 
 rules:
@@ -128,6 +167,17 @@ rules:
       - [voice, {task: no}]
       - [photo, {task: no}]
       - [anything else, {task: no}]
+  status-list:
+    kind: table
+    inputs: [TaskStatus]
+    output: "the Trello list a task's card is in, and its label in /tasks"
+    reqs: [TRL#2, TRL#4]
+    rows:
+      - [recorded, {list: Записана, label: записана}]
+      - [researching, {list: Исследуется, label: исследуется}]
+      - [waiting for answers, {list: Ждёт ответов, label: ждёт ответов}]
+      - [planned, {list: План готов, label: план готов}]
+      - [done, {list: Сделана, label: сделана}]
   health:
     kind: table
     inputs: [DatabaseCheck]
@@ -185,12 +235,12 @@ slices:
   - id: V01
     name: The chat
     type: view
-    reqs: [SK#1, SK#2, SK#5, CAP#2]
+    reqs: [SK#1, SK#2, SK#5, CAP#2, TRL#1]
     read_model:
       name: Reply
       fields:
         chat: [Started.user_id, InboxSaved.user_id, HandlerFailed.user_id]
-        text: [rule:reply, TasksListed]
+        text: [rule:reply, TasksListed, TrelloLinkSent, TrelloConnected, TrelloDeclined]
     screens: [Chat]
 
   - id: S02
@@ -599,6 +649,28 @@ slices:
           see:
             - {screen: Inbox, field: InboxItem.text, is: "no inbox item"}
             - {screen: TaskStore, field: Task.text, is: "no task"}
+      - name: tasks list shows Trello's names and lists
+        given: annaCardsChangedInTrello
+        reqs: [TRL#4]
+        then:
+          events: [TasksListed]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Твои задачи:\n1. Сделать поверку счётчиков — исследуется\n2. Стоматолог: чистка и восьмёрки — записана"}
+      - name: task without a card shows it is not in Trello yet
+        given: annaRecordedTaskBeforeTrello
+        reqs: [TRL#4]
+        then:
+          events: [TasksListed]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Твои задачи:\n1. Сделать поверку счётчиков — ещё не в Trello"}
+      - name: tasks list says when Trello does not answer
+        given: annaConnectedTrello
+        external: {Trello: refuses}
+        reqs: [TRL#4]
+        then:
+          events: [TasksListed]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Trello сейчас не отвечает, попробуй позже."}
       - name: long tasks list is split into several messages
         given: annaRecordedManyLongTasks
         reqs: [CAP#2]
@@ -606,6 +678,178 @@ slices:
           events: [TasksListed]
           see:
             - {screen: Chat, field: Reply.text, is: "several messages, each at most 4096 characters; together «Твои задачи:» and all 40 lines in order"}
+
+  - id: S06
+    name: Ask to connect Trello
+    type: command
+    actor: User
+    screen: Chat
+    # No slice-level reqs: each example says which requirement it serves.
+    command:
+      name: ConnectTrello
+      fields: {user_id: system}
+    errors: []
+    events:
+      TrelloLinkSent:
+        stream: Trello
+        fields: {user_id: cmd}
+    specs:
+      - name: /trello replies with an authorization link
+        given: runningBotWithTrello
+        reqs: [TRL#1]
+        then:
+          events: [TrelloLinkSent]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Чтобы подключить Trello, открой ссылку и разреши доступ: <a link to TRELLO_AUTH_BASE's authorize page, scope read,write, expiration never>"}
+
+  - id: S07
+    name: Allow or refuse Trello's access
+    type: command
+    actor: User
+    screen: TrelloAuthPage
+    # No slice-level reqs: each example says which requirement it serves.
+    command:
+      name: DecideTrelloAccess
+      fields: {user_id: system, decision: input}
+    errors: []
+    events:
+      TrelloConnected:
+        stream: Trello
+        fields: {user_id: cmd}
+      BoardReady:
+        stream: Trello
+        fields: {user_id: cmd}
+      TrelloDeclined:
+        stream: Trello
+        fields: {user_id: cmd}
+    specs:
+      - name: allowing access connects Trello and creates the board
+        given: annaAskedForTrello
+        when: {decision: allow}
+        external: {Trello: takes}
+        covers: [rule:status-list/recorded, rule:status-list/researching, "rule:status-list/waiting for answers", rule:status-list/planned, rule:status-list/done]
+        reqs: [TRL#1, TRL#2]
+        then:
+          events: [TrelloConnected, BoardReady]
+          see:
+            - {screen: TrelloAuthPage, field: AuthPage.text, is: "Trello подключён, можно возвращаться в Telegram."}
+            - {screen: Chat, field: Reply.text, is: "Trello подключён ✅ Задачи будут на доске «todobot»."}
+            - {screen: TrelloBoard, field: Board.name, is: todobot}
+            - {screen: TrelloBoard, field: Board.lists, is: "Записана, Исследуется, Ждёт ответов, План готов, Сделана, in this order"}
+            - {screen: Log, field: LogLine.event, is: trello_connected}
+      - name: an existing todobot board is reused and its missing lists added
+        given: annaHasBoardWithTwoLists
+        when: {decision: allow}
+        external: {Trello: takes}
+        reqs: [TRL#2]
+        then:
+          events: [TrelloConnected, BoardReady]
+          see:
+            - {screen: TrelloBoard, field: Board.name, is: "todobot, one board, not a second"}
+            - {screen: TrelloBoard, field: Board.lists, is: "Записана and Идеи kept; Исследуется, Ждёт ответов, План готов, Сделана added"}
+      - name: refusing access leaves Trello not connected
+        given: annaAskedForTrello
+        when: {decision: deny}
+        external: {Trello: takes}
+        reqs: [TRL#1]
+        then:
+          events: [TrelloDeclined]
+          see:
+            - {screen: TrelloAuthPage, field: AuthPage.text, is: "Trello не подключён."}
+            - {screen: Chat, field: Reply.text, is: "Trello не подключён: доступ не разрешён."}
+
+  - id: A02
+    name: Put a task on Trello
+    type: automation
+    trigger: TaskRecorded
+    # No slice-level reqs: each example says which requirement it serves.
+    command:
+      name: CreateCard
+      fields: {user_id: TaskRecorded.user_id, text: TaskRecorded.text}
+    events:
+      CardCreated:
+        stream: Trello
+        fields: {user_id: cmd, name: system, body: system, list: "rule:status-list"}
+    specs:
+      - name: recorded task becomes a card in Записана
+        given: annaConnectedTrello
+        external: {Trello: takes}
+        reqs: [TRL#3]
+        then:
+          events: [CardCreated]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Сохранил ✅"}
+            - {screen: TrelloBoard, field: Card.name, is: "Сделать поверку счётчиков"}
+            - {screen: TrelloBoard, field: Card.list, is: Записана}
+            - {screen: TrelloBoard, field: Card.body, is: "empty"}
+            - {screen: Log, field: LogLine.event, is: card_created}
+      - name: multi-line task gives its first line as the card's name
+        given: annaConnectedTrello
+        external: {Trello: takes}
+        reqs: [TRL#3]
+        then:
+          events: [CardCreated]
+          see:
+            - {screen: TrelloBoard, field: Card.name, is: "Купить молоко"}
+            - {screen: TrelloBoard, field: Card.body, is: "starts with «Купить молоко\nПозвонить маме»"}
+      - name: card waits while Trello refuses and is made once it takes
+        given: annaConnectedTrello
+        external: {Trello: recovers}
+        reqs: [TRL#3]
+        then:
+          events: [CardCreated]
+          see:
+            - {screen: Chat, field: Reply.text, is: "Сохранил ✅, right away"}
+            - {screen: TrelloBoard, field: Card.name, is: "Сделать поверку счётчиков, once Trello takes calls again"}
+      - name: task recorded before connecting becomes a card once connected
+        given: annaRecordedTaskBeforeTrello
+        external: {Trello: takes}
+        reqs: [TRL#3]
+        then:
+          events: [CardCreated]
+          see:
+            - {screen: TrelloBoard, field: Card.name, is: "Сделать поверку счётчиков, after Анна connects Trello"}
+            - {screen: TrelloBoard, field: Card.list, is: Записана}
+      - name: repeated update makes no second card
+        given: annaConnectedTrelloUpdateComesAgain
+        external: {Trello: takes}
+        reqs: [TRL#3]
+        then:
+          see:
+            - {screen: TrelloBoard, field: Card.name, is: "«Забрать посылку» on one card only"}
+
+  - id: V07
+    name: The Trello board
+    type: view
+    reqs: [TRL#2, TRL#3]
+    read_model:
+      name: Board
+      fields:
+        name: [BoardReady]
+        lists: [BoardReady, rule:status-list]
+    screens: [TrelloBoard]
+
+  - id: V08
+    name: The cards
+    type: view
+    reqs: [TRL#3]
+    read_model:
+      name: Card
+      fields:
+        name: [CardCreated.name]
+        body: [CardCreated.body]
+        list: [CardCreated.list]
+    screens: [TrelloBoard]
+
+  - id: V09
+    name: Trello's answer page
+    type: view
+    reqs: [TRL#1]
+    read_model:
+      name: AuthPage
+      fields:
+        text: [TrelloConnected, TrelloDeclined]
+    screens: [TrelloAuthPage]
 
   - id: V06
     name: The tasks
@@ -792,13 +1036,13 @@ slices:
   - id: V04
     name: The log
     type: view
-    reqs: [SK#1, SK#2, SK#5, DUP#1, ERR#3, ACC#1, ACC#2, CAP#1, CAP#2]
+    reqs: [SK#1, SK#2, SK#5, DUP#1, ERR#3, ACC#1, ACC#2, CAP#1, CAP#2, TRL#1, TRL#3]
     read_model:
       name: LogLine
       fields:
         format: [config]
-        level: [Started, InboxSaved, HandlerFailed, RepeatIgnored, TrackingRefused, AccessRefused, AccessRestricted, AccessOpened, TaskRecorded, TasksListed]
-        event: [Started, InboxSaved, HandlerFailed, RepeatIgnored, TrackingRefused, AccessRefused, AccessRestricted, AccessOpened, TaskRecorded, TasksListed]
+        level: [Started, InboxSaved, HandlerFailed, RepeatIgnored, TrackingRefused, AccessRefused, AccessRestricted, AccessOpened, TaskRecorded, TasksListed, TrelloConnected, CardCreated]
+        event: [Started, InboxSaved, HandlerFailed, RepeatIgnored, TrackingRefused, AccessRefused, AccessRestricted, AccessOpened, TaskRecorded, TasksListed, TrelloConnected, CardCreated]
         allowed: [config]
         version: [config]
         kind: [InboxSaved.kind]

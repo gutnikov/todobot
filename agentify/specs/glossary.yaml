@@ -114,3 +114,14 @@ terms:
   - term: task list
     meaning: "The reply to /tasks: the sender's tasks, oldest first, each with its status (CAP#2)."
     not: [agenda, todo list]
+  - term: Trello
+    meaning: "Where tasks are kept and organised (TRL): the user's board «todobot», one list per status, one card per
+      task. The user connects it through OAuth (TRL#1)."
+    not: [kanban]
+  - term: board
+    meaning: "The user's Trello board «todobot» with the five status lists (TRL#2)."
+    not: [dashboard, desk]
+  - term: card
+    meaning: "A task on the Trello board: its name is the task's first line; the list it is in is its status (TRL#3)."
+    not: [tile, sticker note]
+
