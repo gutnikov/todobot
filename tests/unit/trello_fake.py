@@ -3,11 +3,13 @@ the bot makes to api.trello.com. Every request's OAuth signature is checked with
 file's own, not oauthlib's (which the bot signs with), and a bad one is answered 401, as Trello does. Ids are shaped
 like Trello's: the Unix time of making in 8 hex digits, then 16 more.
 
-It can refuse every REST call (500), and make a card yet answer 500 (an answer that never came back).
+It can refuse every REST call (500), make a card yet answer 500 (an answer that never came back), and make a card at
+once but answer only after a while (a slow answer).
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -91,6 +93,7 @@ class FakeTrello:
     secret: str = SECRET
     refusing: bool = False
     lose_card_answers: int = 0  # the next ones make the card and then answer 500
+    card_answer_delay: float = 0.0  # seconds a card is on the board before its answer goes back
     request_tokens: dict[str, RequestToken] = field(default_factory=dict)
     access_tokens: dict[str, str] = field(default_factory=dict)  # token -> its secret
     boards: list[dict[str, Any]] = field(default_factory=list)
@@ -150,6 +153,8 @@ class FakeTrello:
         authorization = request.headers.get("Authorization", "")
         response = self._answer(request, query, authorization, body)
         self.requests.append(Recorded(request.method, request.path, query, body, authorization, response.status))
+        if self.card_answer_delay and (request.method, request.path) == ("POST", "/1/cards"):
+            await asyncio.sleep(self.card_answer_delay)
         return response
 
     def _answer(

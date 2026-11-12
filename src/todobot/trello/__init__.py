@@ -20,7 +20,7 @@ from todobot.config import TrelloSettings
 from todobot.crypto import SecretBox
 from todobot.logs import log_event
 from todobot.trello import board, store
-from todobot.trello.api import TrelloApi, TrelloError
+from todobot.trello.api import TIMEOUT_SECONDS, TrelloApi, TrelloError
 from todobot.trello.connect import Connector
 from todobot.trello.sync import CardSync, open_access
 
@@ -80,7 +80,11 @@ class TrelloService:
         Connected, a task with a card is its card's current name and the name of the card's list in lower case; a card
         archived or deleted is not shown. A task with no card yet, and every task of a user who has not connected
         Trello, is its text and «ещё не в Trello».
+
+        A card being made for the user now is on the board before its id is stored: that request is waited for first,
+        then the tasks are read, then the board, so no card seen on the board is unknown to the tasks read.
         """
+        await self.sync.settled(user_id, within=TIMEOUT_SECONDS)
         user_tasks = await tasks.of_user(self.engine, user_id)
         connection = await store.connection_of(self.engine, user_id)
         access = None if connection is None else open_access(self.box, connection)

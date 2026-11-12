@@ -91,6 +91,11 @@ def records(stdout: str, event: str) -> list[dict[str, Any]]:
     return [record for line in stdout.splitlines() if (record := json.loads(line))["event"] == event]
 
 
+def card_ids(database_url: str) -> list[str | None]:
+    with psycopg.connect(database_url) as conn:
+        return [row[0] for row in conn.execute("SELECT card_id FROM tasks ORDER BY id").fetchall()]
+
+
 def test_tasks_shows_the_cards_as_they_are_now(migrated_database_url, capsys) -> None:
     trello = FakeTrello()
     asyncio.run(record(migrated_database_url, ANNA, METERS, DENTIST, TYRES))
@@ -206,14 +211,43 @@ def test_a_deleted_board_hides_its_cards_and_is_set_up_again(migrated_database_u
         trello.cards.clear()
         await record(migrated_database_url, ANNA, DENTIST)
         replies = await ask_for_tasks(client, api)
-        new = await eventually(lambda: trello.boards and trello.cards and trello.board_named("todobot")["id"])
-        assert new != old
+
+        def all_stored() -> list[str | None]:
+            ids = card_ids(migrated_database_url)
+            return ids if all(ids) else []
+
+        # Not until the ids are stored: the app stopping now would cut the last card's request short.
+        [_, dentist] = await eventually(all_stored)
+        assert trello.board_named("todobot")["id"] != old
+        assert [card["id"] for card in trello.cards] == [dentist]  # the new task's card, on the new board
         return replies
 
     assert run_app(migrated_database_url, trello, steps) == [f"Твои задачи:\n1. {DENTIST} — ещё не в Trello"]
-    with psycopg.connect(migrated_database_url) as conn:
-        cards = conn.execute("SELECT text, card_id IS NOT NULL FROM tasks ORDER BY id").fetchall()
-    assert cards == [(METERS, True), (DENTIST, True)]  # the new task's card on the new board
+
+
+def test_a_card_whose_answer_is_still_on_its_way_is_the_tasks_card(migrated_database_url) -> None:
+    """A card is on the board as soon as Trello makes it; its id is stored only once Trello's answer is back. A /tasks
+    in between waits for that answer: Анна archived the card at once, so its task is not shown."""
+    trello = FakeTrello(card_answer_delay=1.0)
+    asyncio.run(connect(migrated_database_url, trello, ANNA))
+
+    async def say(client: Client, text: str) -> None:
+        response = await client.post(WEBHOOK_PATH, json=message_update(ANNA, text=text), headers={HEADER: SECRET})
+        assert response.status == 200
+
+    async def steps(client: Client, api: FakeBotApi) -> tuple[list[str], list[str | None]]:
+        await say(client, METERS)
+        await eventually(lambda: card_ids(migrated_database_url)[0])  # its answer came back, its id is stored
+        await say(client, TYRES)
+        [_, tyres] = await eventually(lambda: len(trello.cards) == 2 and trello.cards)
+        tyres["closed"] = True  # archived while Trello's answer is still on its way
+        unconfirmed = card_ids(migrated_database_url)
+        return await ask_for_tasks(client, api), unconfirmed
+
+    replies, unconfirmed = run_app(migrated_database_url, trello, steps)
+
+    assert unconfirmed[1] is None  # /tasks came while the id was not stored yet
+    assert replies == [f"Твои задачи:\n1. {METERS} — записана"]
 
 
 def test_entries_are_numbered_and_labelled_as_cap_lists_them() -> None:

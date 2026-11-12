@@ -178,7 +178,10 @@ Only with `TRELLO_API_KEY` set (TRL). Each user connects their own Trello; the b
 - `/tasks` (TRL#4), connected: each task as its card is now, `<n>. <card's name> — <its list's name in lower case>`;
   an archived or deleted card is not shown; a task with no card yet is `<text> — ещё не в Trello`. When Trello does
   not answer: exactly «Trello сейчас не отвечает, попробуй позже.». A user who has not connected sees each task as
-  `<text> — ещё не в Trello`. The header, the order, «Задач пока нет.» and the splitting are CAP#2's.
+  `<text> — ещё не в Trello`. The header, the order, «Задач пока нет.» and the splitting are CAP#2's. A card is on
+  the board as soon as Trello makes it, but its id is stored only once Trello's answer is back: `/tasks` first waits
+  (at most 10 s) for a card of the user's being made right now, so a card already on the board is always known as
+  its task's.
 - Every call to Trello is OAuth 1.0a signed (HMAC-SHA1, `oauthlib`) in the `Authorization` header: no key or token
   in a URL. A card's text goes in a JSON body. One call waits at most 10 s.
 

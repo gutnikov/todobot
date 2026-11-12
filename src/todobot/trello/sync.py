@@ -10,6 +10,10 @@ No task gets a second card:
 - one process at a time runs a round (`store.sync_lock`), so two never ask for the same card.
 What is left: a card the user renamed, moved to another board or deleted before the next round finds it, or a card
 made more than CLOCK_SLACK before the mark by Trello's clock, is not found, and the task gets a new one.
+
+A card is on the board from the moment Trello makes it, its id in the database only once Trello's answer is back and
+stored. `/tasks` reads both, so it first waits for a request of the user's that is under way (`settled`): a card it
+sees on the board is then always one the database knows as the task's.
 """
 
 from __future__ import annotations
@@ -52,6 +56,19 @@ class CardSync:
         self.retry_seconds = retry_seconds
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
+        # user id -> set once the request for a card of theirs that is under way is done (its id stored, or failed)
+        self._requests: dict[int, asyncio.Event] = {}
+
+    async def settled(self, user_id: int, *, within: float) -> None:
+        """Return once no card of the user's is being asked of Trello here: the request under way (if any) is done, its
+        card's id stored or the request failed. Waits at most `within` s. The rounds run in this process (one replica;
+        another process runs one only while a deploy takes over), so only its own requests are waited for."""
+        done = self._requests.get(user_id)
+        if done is None:
+            return
+        with contextlib.suppress(TimeoutError):
+            async with asyncio.timeout(within):
+                await done.wait()
 
     def nudge(self) -> None:
         """Run a round now rather than at the next tick."""
@@ -140,6 +157,16 @@ class CardSync:
                     await store.reset_board(self.engine, connection)
 
     async def _card_for(self, task: store.TaskWithoutCard, access: Access) -> None:
+        user_id = task.connection.user_id
+        done = self._requests[user_id] = asyncio.Event()
+        try:
+            await self._request_card(task, access)
+        finally:
+            done.set()
+            if self._requests.get(user_id) is done:
+                del self._requests[user_id]
+
+    async def _request_card(self, task: store.TaskWithoutCard, access: Access) -> None:
         connection = task.connection
         if connection.board_id is None or connection.list_id is None:  # never: the query asks for both
             return
