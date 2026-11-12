@@ -1,0 +1,125 @@
+# Tasks in Trello: the board is where tasks are kept and organised; the bot connects to it through OAuth, puts every
+# recorded task there as a card, and reads it back for /tasks. From issue #31
+# (https://github.com/gutnikov/todobot/issues/31) and the owner's answers TRL?1 to TRL?4. It changes CAP#2's list
+# (statuses from Trello's lists) when Trello is set up, so its approval names CAP too.
+
+key: TRL
+source: "https://github.com/gutnikov/todobot/issues/31"
+title: "tasks in Trello"
+fetched: 2026-11-12
+status: approved
+approved_by: "the user"
+approved_at: "2026-11-12"
+
+requirements:
+  - id: TRL#1
+    kind: functional
+    text: |
+      `/trello` replies with a link that asks the user, on Trello, to give the bot read and write access to their
+      Trello account, with no end date:
+
+      > Чтобы подключить Trello, открой ссылку и разреши доступ: <link>
+
+      When the user allows it, the browser shows «Trello подключён, можно возвращаться в Telegram.», and the bot
+      writes to the chat exactly:
+
+      > Trello подключён ✅ Задачи будут на доске «todobot».
+
+      When the user refuses, the browser shows «Trello не подключён.» and the chat gets exactly:
+
+      > Trello не подключён: доступ не разрешён.
+
+      The access is the user's own: each user connects their own Trello. `/trello` again replaces the access.
+    prod:
+      signal: none
+      why: "the owner connects Trello once, after the release that brings it; the agent checks the line trello_connected then, not in every window"
+
+  - id: TRL#2
+    kind: functional
+    text: |
+      Once connected, the bot uses the user's board named «todobot»; when there is none, it creates it. The board has
+      these five lists, in this order, one per status: «Записана», «Исследуется», «Ждёт ответов», «План готов»,
+      «Сделана». A list that is missing is added; nothing else on the board is changed.
+    prod:
+      signal: none
+      why: "it happens once, at connection; the agent checks the board through Trello after connecting"
+
+  - id: TRL#3
+    kind: functional
+    text: |
+      Every recorded task (CAP#1) becomes a card in the list «Записана» of that board. A one-line text is the card's
+      name; a text of several lines gives its first line as the name and the whole text as the first block of the
+      card's description. The reply stays «Сохранил ✅» right away: when Trello does not take the card, or the user
+      has not connected Trello yet, the task waits in the database and the bot tries again once a minute until the
+      card is made. A repeated update makes no second card. Tasks recorded before this requirement become cards too,
+      once Trello is connected.
+    prod:
+      signal: "a task reached Trello: a log line with `event` = `card_created` and the release's version"
+      match: {event: card_created}
+      min: 1
+
+  - id: TRL#4
+    kind: functional
+    text: |
+      With Trello connected, `/tasks` reads the board: each task's line shows its card's current name and, as its
+      status, the name of the list the card is in, in lower case («— записана», «— исследуется», «— ждёт ответов»,
+      «— план готов», «— сделана»). A card the user renamed shows its new name; a card the user archived or deleted
+      is not shown. A task that has no card yet shows «— ещё не в Trello». When Trello does not answer, `/tasks`
+      replies exactly «Trello сейчас не отвечает, попробуй позже.». The rest of CAP#2 holds: the header, the order
+      (oldest first), «Задач пока нет.», the splitting.
+    prod:
+      signal: none
+      why: "CAP's tasks_listed already shows /tasks working; that the list comes from Trello is checked by the agent with the owner's /tasks after connecting"
+
+seams: |
+  - **Off unless set up:** without `TRELLO_API_KEY` the bot has no Trello at all and behaves as CAP says (SK's, DUP's,
+    ERR's, ACC's and CAP's tests run so). With it, `/trello` works, and a task waits for its card until its user
+    connects Trello.
+  - **Environment:** `TRELLO_API_KEY` and `TRELLO_API_SECRET` (the bot's Trello app), `PUBLIC_BASE_URL` (the bot's
+    own address, for the link back from Trello), `TRELLO_API_BASE` (default `https://api.trello.com`) and
+    `TRELLO_AUTH_BASE` (default `https://trello.com`), `TRELLO_RETRY_SECONDS` (default 60: TRL#3's once a minute),
+    `APP_SECRET_KEY` (encrypts the users' Trello tokens in the database). Secrets live only in Railway's variables.
+  - **OAuth:** Trello's OAuth 1.0a (request token, authorize with `scope=read,write` and `expiration=never`, the
+    callback `GET {PUBLIC_BASE_URL}/trello/callback`, access token). The user's token is stored encrypted, never logged
+    and never sent to PostHog.
+  - **Tests:** a fake Trello at `TRELLO_API_BASE` and `TRELLO_AUTH_BASE` serves the OAuth endpoints and the REST API
+    the bot uses (boards, lists, cards), keeps its own state, and can refuse every call (500). Tests drive the OAuth
+    callback as a browser would. `TRELLO_RETRY_SECONDS` may be set low.
+  - **Durations (TRL?5):** the `/trello` link lasts 30 minutes; each call to Trello waits at most 10 seconds; after a
+    failed or unknown card request, the bot looks on the board for a card it made in the last 10 minutes before
+    making another.
+  - **Tags:** `test_trl1_…` … `test_trl4_…`, or the examples' names, in `tests/acceptance/`; earlier approved files
+    are not changed.
+
+# Written by a test writer with a fresh context from this file, the contract and the delta, after the approval.
+# The worker does not change them.
+acceptance_tests:
+  red_before_work: "`uv run pytest tests/acceptance -k trl` → `12 failed` (/trello answered «Сохранил ✅»; /tasks showed «— записана» for a task with no card), 2026-11-12"
+  sha256:
+    tests/acceptance/test_trl1_connecting_trello.py: 678526757d2aa384343f9a8d814bddf8661acd5a89f412005a3f74863b8d4ed2
+    tests/acceptance/test_trl2_todobot_board.py: 6289dd79e23db23316acfa6e1623706c862bebda94c1239b8cda77e90eb85d15
+    tests/acceptance/test_trl3_task_cards.py: 2b2302c4768718b45487a0d72ed2616a588cae17dd8f42388ec41e93b197d8b1
+    tests/acceptance/test_trl4_tasks_from_trello.py: 567295483e1d799c9d3d758e0073ad259cd3f4c50f962f7618933dff2840c475
+    tests/acceptance/trl_harness.py: 15d1e3f4b0e18c77e02317bfbf97102e55f11b72e0f7d3085f8155a7804cc993
+
+questions:
+  - id: TRL?1
+    reason: H4
+    text: "Who creates the Trello board with the status lists, and how does the bot get access?"
+    answer: "OAuth: the bot sends a link, the owner allows access, and the bot creates the board «todobot» with the five lists, or finds it. Decided by the owner, 2026-11-12."
+  - id: TRL?2
+    reason: H4
+    text: "The tasks already recorded in the database after #14: move them to Trello?"
+    answer: "Yes: they become cards in «Записана» once Trello is connected. Decided by the owner, 2026-11-11."
+  - id: TRL?3
+    reason: H4
+    text: "What is the card's name when the task's text has several lines?"
+    answer: "The first line; the whole text is the first block of the description, and the agent's note comes after it. Decided by the owner, 2026-11-11."
+  - id: TRL?4
+    reason: H4
+    text: "What does the bot do when Trello is down as a task comes in?"
+    answer: "Reply «Сохранил ✅», keep the task in the database and try again once a minute until it reaches Trello; /tasks marks it «ещё не в Trello». Decided by the owner, 2026-11-11."
+  - id: TRL?5
+    reason: H1
+    text: "How long does the /trello link last, how long does a call to Trello wait, and how far back does the bot look for a card it may already have made?"
+    answer: "30 minutes, 10 seconds, 10 minutes. Decided by the owner, 2026-11-12."

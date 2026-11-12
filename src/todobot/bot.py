@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
@@ -12,17 +12,22 @@ from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandStart
-from aiogram.types import ErrorEvent, Message, TelegramObject, Update
+from aiogram.types import ErrorEvent, LinkPreviewOptions, Message, TelegramObject, Update
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from todobot import inbox, tasks, texts
 from todobot.logs import format_exception, log_event, redact
 
+if TYPE_CHECKING:
+    from todobot.trello import TrelloService
+
 logger = logging.getLogger(__name__)
 
 # CAP#2: the command that lists the sender's tasks.
 TASKS_COMMAND = "tasks"
+# TRL#1: the command that connects the sender's Trello (only with Trello set up).
+TRELLO_COMMAND = "trello"
 
 
 def build_bot(token: str, api_base: str) -> Bot:
@@ -89,11 +94,14 @@ def _content(message: Message | None) -> tuple[str | None, ...]:
     return (message.text, message.caption, inbox.classify(message).file_id, *sorted(ids))
 
 
-def build_dispatcher(engine: AsyncEngine, *, allowed_user_ids: frozenset[int] | None) -> Dispatcher:
-    """The dispatcher; `engine` reaches the handlers as their `engine` argument. With `allowed_user_ids` (ACC), only
-    those users are served; None serves every user."""
-    dispatcher = TodobotDispatcher(engine=engine)
-    dispatcher.include_router(build_router(allowed_user_ids=allowed_user_ids))
+def build_dispatcher(
+    engine: AsyncEngine, *, allowed_user_ids: frozenset[int] | None, trello: TrelloService | None = None
+) -> Dispatcher:
+    """The dispatcher; `engine` and `trello` reach the handlers as their arguments of those names. With
+    `allowed_user_ids` (ACC), only those users are served; None serves every user. With `trello` (TRL), `/trello`
+    connects the sender's Trello and `/tasks` reads their board; None: no Trello at all, as CAP says."""
+    dispatcher = TodobotDispatcher(engine=engine, trello=trello)
+    dispatcher.include_router(build_router(allowed_user_ids=allowed_user_ids, trello=trello is not None))
     return dispatcher
 
 
@@ -139,7 +147,7 @@ async def refuse(message: Message) -> None:
         )
 
 
-def build_router(*, allowed_user_ids: frozenset[int] | None) -> Router:
+def build_router(*, allowed_user_ids: frozenset[int] | None, trello: bool = False) -> Router:
     router = Router(name="skeleton")
     # The bot is for private chats; anything else is left unhandled.
     router.message.filter(F.chat.type == ChatType.PRIVATE)
@@ -151,6 +159,9 @@ def build_router(*, allowed_user_ids: frozenset[int] | None) -> Router:
     router.message.register(on_start, F.text, CommandStart(ignore_mention=True))
     # /tasks likewise (CAP#2); it is neither an inbox item nor a task, so it comes before on_message.
     router.message.register(on_tasks, F.text, Command(TASKS_COMMAND, ignore_mention=True))
+    # /trello likewise, with Trello set up (TRL#1); without it, it is a command like any other: an inbox item.
+    if trello:
+        router.message.register(on_trello, F.text, Command(TRELLO_COMMAND, ignore_mention=True))
     router.message.register(on_message)
     router.errors.register(on_error)
     return router
@@ -169,13 +180,22 @@ class TasksNotSentError(Exception):
     """
 
 
-async def on_tasks(message: Message, engine: AsyncEngine) -> None:
-    """CAP#2: the sender's tasks, oldest first, in as many messages as the list needs; stored nowhere."""
+async def on_tasks(message: Message, engine: AsyncEngine, trello: TrelloService | None) -> None:
+    """CAP#2: the sender's tasks, oldest first, in as many messages as the list needs; stored nowhere. TRL#4: with
+    Trello set up, each task as its card on the board is now (`TrelloService.listed`), or that Trello does not answer.
+    """
     if message.from_user is None:  # never in a private chat
         return
     user_id = message.from_user.id
-    listed = await tasks.of_user(engine, user_id)
-    replies = tasks.render(listed)
+    if trello is None:
+        listed = [(task.text, texts.STATUS_LABELS[task.status]) for task in await tasks.of_user(engine, user_id)]
+    else:
+        from_trello = await trello.listed(user_id)
+        if from_trello is None:  # Trello does not answer (logged as trello_unavailable)
+            await message.answer(texts.TRELLO_DOWN)
+            return
+        listed = from_trello
+    replies = tasks.render_entries(listed)
     for number, reply in enumerate(replies, 1):
         try:
             await message.answer(reply)
@@ -186,12 +206,25 @@ async def on_tasks(message: Message, engine: AsyncEngine) -> None:
     log_event(logger, "tasks_listed", user_id=user_id, tasks=len(listed), messages=len(replies))
 
 
-async def on_message(message: Message, engine: AsyncEngine) -> None:
+async def on_trello(message: Message, trello: TrelloService) -> None:
+    """TRL#1: the link to Trello's page that asks the sender to give the bot access to their Trello. Stored nowhere but
+    as the request it starts (`todobot.trello.connect`). The link holds the request token: it is never logged, and
+    Telegram is not asked to fetch it for a preview."""
+    if message.from_user is None:  # never in a private chat
+        return
+    user_id = message.from_user.id
+    link = await trello.link(user_id)
+    await message.answer(texts.TRELLO_LINK.format(link=link), link_preview_options=LinkPreviewOptions(is_disabled=True))
+    log_event(logger, "trello_link_sent", user_id=user_id)
+
+
+async def on_message(message: Message, engine: AsyncEngine, trello: TrelloService | None) -> None:
     """SK-2: any other message (other commands included) goes to the sender's inbox; CAP#1: a plain text becomes a
     task with it (`inbox.save`).
 
     DUP#1: Telegram's repeat of an update (the same chat and message_id) finds its message stored; it is kept once
-    and not replied to again, and makes no second task.
+    and not replied to again, and makes no second task. TRL#3: with Trello set up, a new task's card is made outside
+    the webhook, by the loop this nudges; the reply does not wait for it.
     """
     if message.from_user is None:  # never in a private chat; there would be no one to store it for
         return
@@ -203,6 +236,8 @@ async def on_message(message: Message, engine: AsyncEngine) -> None:
     log_event(logger, "inbox_saved", kind=item.kind, user_id=user_id, message_id=message.message_id)
     if item.task_text is not None:
         log_event(logger, "task_recorded", user_id=user_id, message_id=message.message_id)
+        if trello is not None:  # TRL#3: its card is made outside the webhook, starting now
+            trello.nudge()
     await message.answer(texts.SAVED)
 
 

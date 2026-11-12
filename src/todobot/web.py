@@ -1,4 +1,5 @@
-"""The HTTP server: the Telegram webhook and `GET /healthz`, on one aiohttp app."""
+"""The HTTP server: the Telegram webhook, `GET /healthz` and, with Trello set up, Trello's OAuth callback (TRL#1), on
+one aiohttp app."""
 
 from __future__ import annotations
 
@@ -11,13 +12,15 @@ from collections.abc import Callable
 from aiogram import Bot, Dispatcher
 from aiogram.methods import TelegramMethod
 from aiohttp import web
+from aiohttp.abc import AbstractAccessLogger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from todobot.bot import build_bot, build_dispatcher, update_id_of
-from todobot.config import Settings
+from todobot.config import TRELLO_CALLBACK_PATH, Settings
 from todobot.db import create_engine
 from todobot.logs import log_event
+from todobot.trello import TrelloService
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +40,27 @@ SHUTDOWN_TIMEOUT_SECONDS = SHUTDOWN_GRACE_SECONDS / 2
 
 ENGINE = web.AppKey("engine", AsyncEngine)
 VERSION = web.AppKey("version", str)
+
+
+class AccessLog(AbstractAccessLogger):
+    """aiohttp's access log (`event=http_request`) as one line per request: the method, the path, the status, the size
+    and the time taken. Never the query string (Trello's callback carries the OAuth request token and verifier in it),
+    the Referer (which can carry them too) or the caller's address."""
+
+    def log(self, request: web.BaseRequest, response: web.StreamResponse, time: float) -> None:
+        self.logger.info(
+            "%s %s %s",
+            request.method,
+            request.path,
+            response.status,
+            extra={
+                "method": request.method,
+                "path": request.path,
+                "status": response.status,
+                "size": response.body_length,
+                "seconds": round(time, 6),
+            },
+        )
 
 
 class WebhookHandler:
@@ -115,15 +139,25 @@ async def healthz(request: web.Request) -> web.Response:
 
 
 def build_app(settings: Settings) -> web.Application:
-    """The aiohttp app. Building and starting it touches neither the database nor the Bot API."""
+    """The aiohttp app. Building it touches neither the database, the Bot API nor Trello; starting it, with Trello set
+    up, starts the loop that makes the cards (TRL#3)."""
     engine = create_engine(settings.database_url)
     bot = build_bot(settings.bot_token, settings.api_base)
-    dispatcher = build_dispatcher(engine, allowed_user_ids=settings.allowed_user_ids)
+    trello = None if settings.trello is None else TrelloService(settings.trello, engine, bot)
+    dispatcher = build_dispatcher(engine, allowed_user_ids=settings.allowed_user_ids, trello=trello)
 
     app = web.Application()
     app[ENGINE] = engine
     app[VERSION] = settings.version
     app.router.add_get(HEALTH_PATH, healthz)
+    if trello is not None:
+        # GET only: a HEAD would use up the request token as well.
+        app.router.add_get(TRELLO_CALLBACK_PATH, trello.callback, allow_head=False)
+        app.on_startup.append(trello.start)
+        # The loop stops as shutdown begins; the HTTP session to Trello closes once the requests in flight are done,
+        # before the Bot API session and the engine (registered after it) go.
+        app.on_shutdown.append(trello.stop_sync)
+        app.on_cleanup.append(trello.close)
     WebhookHandler(dispatcher, bot, secret_token=settings.webhook_secret).register(app, path=WEBHOOK_PATH)
 
     async def dispose_engine(app: web.Application) -> None:
@@ -156,7 +190,7 @@ async def serve(settings: Settings, *, on_started: Callable[[], None] | None = N
     be handled and answered, cancels the rest (unanswered, Telegram sends them again), and then closes the Bot API
     session and the database engine.
     """
-    runner = web.AppRunner(build_app(settings), shutdown_timeout=SHUTDOWN_TIMEOUT_SECONDS)
+    runner = web.AppRunner(build_app(settings), shutdown_timeout=SHUTDOWN_TIMEOUT_SECONDS, access_log_class=AccessLog)
     await runner.setup()
     try:
         site = web.TCPSite(runner, host=HOST, port=settings.port)
